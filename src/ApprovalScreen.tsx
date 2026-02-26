@@ -23,6 +23,12 @@ const ApprovalScreen: React.FC<ApprovalScreenProps> = ({ request, onBack, onAppr
             </header>
 
             <div className="approval-card-modern">
+                {request.type === 'OVER_SLOT' && (
+                    <div className="over-slot-warning-banner">
+                        <AlertCircle size={18} />
+                        <span><strong>PENGAJUAN OVER-SLOT:</strong> Memerlukan persetujuan khusus hingga Dept. Head untuk melanjutkan.</span>
+                    </div>
+                )}
                 <div className="card-top-info">
                     <div className="user-profile-info">
                         <div className="user-avatar-lg">
@@ -75,12 +81,19 @@ const ApprovalScreen: React.FC<ApprovalScreenProps> = ({ request, onBack, onAppr
                     </div>
                 </div>
 
+                {request.type === 'OVER_SLOT' && request.slotJustification && (
+                    <div className="justification-box-modern">
+                        <h5>Justifikasi Penambahan Slot</h5>
+                        <p>"{request.slotJustification}"</p>
+                    </div>
+                )}
+
                 <div className="approval-actions-footer">
                     <button className="btn-reject-modern" onClick={() => onReject(request.id)}>
                         <XCircle size={18} /> Tolak
                     </button>
                     <button className="btn-approve-modern" onClick={() => onApprove(request.id)}>
-                        <CheckCircle2 size={18} /> Setujui
+                        <CheckCircle2 size={18} /> {request.type === 'OVER_SLOT' ? 'Setujui Penambahan Slot & Kasbon' : 'Setujui'}
                     </button>
                 </div>
             </div>
@@ -138,6 +151,21 @@ const ApprovalScreen: React.FC<ApprovalScreenProps> = ({ request, onBack, onAppr
           box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
         }
         .btn-approve-modern:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(16, 185, 129, 0.3); }
+        .btn-approve-modern:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(16, 185, 129, 0.3); }
+
+        .over-slot-warning-banner {
+            background: #fff1f2; border: 1px solid #fecaca; border-radius: 12px;
+            padding: 12px 16px; margin-bottom: 24px; display: flex; align-items: center; gap: 12px;
+            color: #ef4444; font-size: 0.85rem;
+        }
+        .over-slot-warning-banner strong { font-weight: 800; }
+
+        .justification-box-modern {
+            background: #fffbeb; border: 1.5px solid #fde68a; border-radius: 16px;
+            padding: 24px; margin-bottom: 32px;
+        }
+        .justification-box-modern h5 { font-size: 0.75rem; font-weight: 800; color: #b45309; text-transform: uppercase; margin-bottom: 12px; letter-spacing: 0.05em; }
+        .justification-box-modern p { font-size: 1rem; color: #92400e; font-style: italic; line-height: 1.6; font-weight: 500; }
       `}</style>
         </div>
     );

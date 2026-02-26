@@ -23,32 +23,28 @@ const StatusTracker: React.FC<StatusTrackerProps> = ({ request, onBack }) => {
                 <button className="btn-icon-more"><MoreVertical size={20} /></button>
             </header>
 
-            {/* Modern Timeline Horizontal */}
+            {/* Dynamic Timeline Horizontal */}
             <section className="timeline-section-modern">
                 <div className="timeline-container-modern">
-                    <div className="timeline-step finished">
-                        <div className="step-point"><CheckCircle2 size={16} /></div>
-                        <span>Submitted</span>
-                    </div>
-                    <div className="timeline-connector finished" />
+                    {request.approvalPath.map((step, idx) => {
+                        const isApproved = step.status === 'APPROVED';
+                        const isCurrent = !isApproved && (idx === 0 || request.approvalPath[idx - 1].status === 'APPROVED');
 
-                    <div className={`timeline-step ${request.status === 'PENDING' ? 'active' : 'finished'}`}>
-                        <div className="step-point">{request.status === 'PENDING' ? <Clock size={16} /> : <CheckCircle2 size={16} />}</div>
-                        <span>Manager Approval</span>
-                        {request.status === 'PENDING' && <div className="step-countdown">1 hari tersisa</div>}
-                    </div>
-                    <div className={`timeline-connector ${request.status === 'APPROVED' ? 'finished' : ''}`} />
-
-                    <div className="timeline-step">
-                        <div className="step-point"><CircleDashed size={16} /></div>
-                        <span>Senior Manager</span>
-                    </div>
-                    <div className="timeline-connector" />
-
-                    <div className="timeline-step">
-                        <div className="step-point"><CircleDashed size={16} /></div>
-                        <span>Paid</span>
-                    </div>
+                        return (
+                            <React.Fragment key={idx}>
+                                {idx > 0 && (
+                                    <div className={`timeline-connector ${isApproved ? 'finished' : (isCurrent ? 'active' : '')}`} />
+                                )}
+                                <div className={`timeline-step ${isApproved ? 'finished' : (isCurrent ? 'active' : '')}`}>
+                                    <div className="step-point">
+                                        {isApproved ? <CheckCircle2 size={16} /> : (isCurrent ? <Clock size={16} /> : <CircleDashed size={16} />)}
+                                    </div>
+                                    <span>{step.role === 'Requestor' ? 'Submitted' : step.role}</span>
+                                    {isCurrent && <div className="step-countdown">1 hari tersisa</div>}
+                                </div>
+                            </React.Fragment>
+                        );
+                    })}
                 </div>
             </section>
 
@@ -69,11 +65,30 @@ const StatusTracker: React.FC<StatusTrackerProps> = ({ request, onBack }) => {
                 </div>
             </section>
 
-            {/* Riwayat Persetujuan */}
+            {/* Riwayat Persetujuan - Menampilkan Seluruh Hierarki */}
             <section className="approval-history-modern">
                 <h3>Riwayat Persetujuan</h3>
-                <div className="history-empty">
-                    <p>Belum ada riwayat persetujuan untuk saat ini.</p>
+                <div className="history-list">
+                    {request.approvalPath.map((step, idx) => (
+                        <div key={idx} className="history-item">
+                            <span className="history-role">
+                                {step.role === 'Requestor' ? 'Pengajuan kasbon' : step.role}
+                            </span>
+                            <span className="history-colon">:</span>
+                            <div className="history-info">
+                                <span className="history-name">
+                                    {step.approverName}
+                                    {step.status === 'APPROVED' ? (
+                                        <span className="history-date">
+                                            {step.role === 'Requestor'
+                                                ? ` (${step.approvedAt?.split(',')[0]})`
+                                                : ` (Disetujui, ${step.approvedAt?.split(',')[0]})`}
+                                        </span>
+                                    ) : ''}
+                                </span>
+                            </div>
+                        </div>
+                    ))}
                 </div>
             </section>
 
@@ -109,21 +124,30 @@ const StatusTracker: React.FC<StatusTrackerProps> = ({ request, onBack }) => {
 
         .timeline-connector { flex: 1; height: 3px; background: #f3f4f6; margin: 0 -20px; position: relative; top: -14px; }
         .timeline-connector.finished { background: #10b981; }
+        .timeline-connector.active { background: #f1f5f9; border: 1px dashed #cbd5e1; }
 
         .detail-kasbon-card { background: white; border-radius: 20px; padding: 32px; border: 1px solid #f3f4f6; }
-        .detail-kasbon-card h3 { font-size: 1rem; font-weight: 800; color: #9ca3af; text-transform: uppercase; margin-bottom: 24px; }
+        .detail-kasbon-card h3 { font-size: 0.8rem; font-weight: 800; color: #94a3b8; text-transform: uppercase; margin-bottom: 24px; letter-spacing: 0.05em; }
         
         .items-table-modern { display: flex; flex-direction: column; gap: 16px; }
-        .item-row-detail { display: flex; justify-content: space-between; align-items: center; padding-bottom: 12px; border-bottom: 1px solid #f9fafb; }
-        .item-desc { display: flex; align-items: center; gap: 10px; font-weight: 600; color: #374151; }
-        .item-price { font-weight: 700; color: #111827; }
+        .item-row-detail { display: flex; justify-content: space-between; align-items: center; padding-bottom: 12px; border-bottom: 1px solid #f8fafc; }
+        .item-desc { display: flex; align-items: center; gap: 10px; font-weight: 600; color: #475569; font-size: 0.95rem; }
+        .item-price { font-weight: 800; color: #1e293b; }
 
         .detail-total-row { display: flex; justify-content: space-between; align-items: center; margin-top: 24px; }
-        .detail-total-row span { font-weight: 800; color: #111827; font-size: 1.1rem; }
-        .detail-total-row strong { font-size: 1.5rem; font-weight: 800; color: var(--primary); }
+        .detail-total-row span { font-weight: 800; color: #1e293b; font-size: 1.1rem; }
+        .detail-total-row strong { font-size: 1.8rem; font-weight: 800; color: #10b981; }
 
         .approval-history-modern { background: white; border-radius: 20px; padding: 32px; border: 1px solid #f3f4f6; }
-        .approval-history-modern h3 { font-size: 1rem; font-weight: 800; color: #9ca3af; text-transform: uppercase; margin-bottom: 24px; }
+        .approval-history-modern h3 { font-size: 0.8rem; font-weight: 800; color: #94a3b8; text-transform: uppercase; margin-bottom: 24px; letter-spacing: 0.05em; }
+        
+        .history-list { display: flex; flex-direction: column; gap: 12px; }
+        .history-item { display: grid; grid-template-columns: 200px 20px 1fr; font-size: 0.95rem; align-items: start; padding: 4px 0; }
+        .history-role { font-weight: 600; color: #475569; }
+        .history-colon { color: #94a3b8; font-weight: 800; }
+        .history-info { display: flex; align-items: center; }
+        .history-name { color: #1e293b; font-weight: 700; white-space: nowrap; }
+        .history-date { font-size: 0.95rem; color: #475569; font-weight: 500; }
         .history-empty { text-align: center; color: #9ca3af; padding: 20px 0; font-size: 0.9rem; }
       `}</style>
         </div>

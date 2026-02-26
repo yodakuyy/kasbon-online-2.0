@@ -1,20 +1,15 @@
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import Login from './Login';
-import AdminDashboard from './AdminDashboard';
 import UserDashboard from './UserDashboard';
-import { AppProvider, useApp } from './context/AppContext';
+import { AppProvider } from './context/AppContext';
 
 const AppContent = () => {
-  const { currentUser } = useApp();
-
   return (
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route
         path="/dashboard"
-        element={
-          currentUser.role === 'ADMIN' ? <AdminDashboard /> : <UserDashboard />
-        }
+        element={<UserDashboard />}
       />
 
       {/* Default redirect based on role */}
