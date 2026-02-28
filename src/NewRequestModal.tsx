@@ -266,12 +266,42 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
                                         <UserCheck size={16} /> Estimasi Alur Persetujuan (Auto-detect)
                                     </div>
                                     <div className="preview-chain">
-                                        {getDynamicApprovalPath(totalAmount, isSlotFull).map((step, idx) => (
-                                            <div key={idx} className="preview-step">
-                                                <span className="step-role">{step.role}:</span>
-                                                <span className="step-name">{step.approverName}</span>
-                                            </div>
-                                        ))}
+                                        {(() => {
+                                            const allSteps = getDynamicApprovalPath(totalAmount, isSlotFull);
+                                            const approvalSteps = allSteps.filter(s => s.role !== 'Finance');
+                                            const financeStep = allSteps.find(s => s.role === 'Finance');
+
+                                            return (
+                                                <>
+                                                    {/* Section 1: Hierarchy Approval */}
+                                                    <div className="preview-section-label">📋 Approval Hierarki</div>
+                                                    {approvalSteps.map((s, idx) => (
+                                                        <div key={idx} className="preview-step">
+                                                            <span className="step-role">{s.role}:</span>
+                                                            <span className="step-name">{s.approverName}</span>
+                                                        </div>
+                                                    ))}
+
+                                                    {/* Divider */}
+                                                    {financeStep && (
+                                                        <>
+                                                            <div className="preview-divider">
+                                                                <div className="divider-line" />
+                                                                <span className="divider-text">Verifikasi & Pencairan</span>
+                                                                <div className="divider-line" />
+                                                            </div>
+                                                            <div className="preview-step finance-step">
+                                                                <span className="step-role">💰 {financeStep.role}:</span>
+                                                                <span className="step-name">{financeStep.approverName}</span>
+                                                            </div>
+                                                            <p className="finance-note">
+                                                                Finance akan memverifikasi dokumen fisik & sistem sebelum pencairan.
+                                                            </p>
+                                                        </>
+                                                    )}
+                                                </>
+                                            );
+                                        })()}
                                     </div>
                                 </div>
                             </div>
@@ -451,11 +481,22 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
 
         .live-approval-preview { margin-top: 32px; background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 16px; padding: 20px; }
         .preview-label { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
-        .preview-chain { display: flex; flex-direction: column; gap: 12px; }
-        .preview-step { display: grid; grid-template-columns: 120px 1fr; font-size: 0.85rem; align-items: center; padding-bottom: 8px; border-bottom: 1px solid #f1f5f9; }
+        .preview-chain { display: flex; flex-direction: column; gap: 10px; }
+        .preview-section-label { font-size: 0.7rem; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+        .preview-step { display: grid; grid-template-columns: 140px 1fr; font-size: 0.85rem; align-items: center; padding-bottom: 8px; border-bottom: 1px solid #f1f5f9; }
         .preview-step:last-child { border-bottom: none; }
         .step-role { font-weight: 700; color: #475569; }
         .step-name { color: #796cf2; font-weight: 600; text-align: right; }
+
+        .preview-divider { display: flex; align-items: center; gap: 12px; margin: 12px 0 8px; }
+        .divider-line { flex: 1; height: 1px; background: repeating-linear-gradient(90deg, #cbd5e1 0px, #cbd5e1 4px, transparent 4px, transparent 8px); }
+        .divider-text { font-size: 0.65rem; font-weight: 800; color: #796cf2; text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap; }
+
+        .finance-step { background: #fefce8; border: 1px solid #fde68a; border-radius: 8px; padding: 10px 12px !important; }
+        .finance-step .step-role { color: #92400e; }
+        .finance-step .step-name { color: #b45309; font-weight: 700; }
+
+        .finance-note { font-size: 0.72rem; color: #92400e; font-weight: 500; margin: 6px 0 0; font-style: italic; padding-left: 4px; }
 
         .upload-modern-area { 
           border: 2px dashed #e5e7eb; border-radius: 20px; padding: 60px; 

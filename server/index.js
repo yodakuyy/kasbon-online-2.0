@@ -273,6 +273,121 @@ app.post('/api/department-settings', async (req, res) => {
     }
 });
 
+// ============ APPROVAL MATRIX ENDPOINTS ============
+
+// GET all matrix tiers
+app.get('/api/approval-matrix', async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('approval_matrix')
+            .select('*')
+            .order('min_amount', { ascending: true });
+
+        if (error) throw error;
+        res.json({ status: 'success', data });
+    } catch (err) {
+        console.error('Fetch Matrix Error:', err.message);
+        res.status(500).json({ status: 'error', message: err.message });
+    }
+});
+
+// UPDATE a matrix tier
+app.put('/api/approval-matrix/:id', async (req, res) => {
+    const { id } = req.params;
+    const { min_amount, max_amount, layers } = req.body;
+    try {
+        const { data, error } = await supabase
+            .from('approval_matrix')
+            .update({
+                min_amount,
+                max_amount,
+                layers,
+                updated_at: new Date().toISOString()
+            })
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (error) throw error;
+        res.json({ status: 'success', data });
+    } catch (err) {
+        console.error('Update Matrix Error:', err.message);
+        res.status(500).json({ status: 'error', message: err.message });
+    }
+});
+
+// ============ ORG CHAIN ENDPOINT ============
+// Build the full reporting chain for a given employee (walks UP the hierarchy)
+app.get('/api/org-chain/:emp_no', async (req, res) => {
+    const { emp_no } = req.params;
+    try {
+        // 1. Get the employee
+        const { rows: empRows } = await pool.query(`
+            SELECT emp_no, employe_name, employee_position, job_title, organization_unit, direct_supervisorid, direct_supervisor
+            FROM modena.users WHERE emp_no = $1 LIMIT 1
+        `, [emp_no]);
+
+        if (!empRows.length) {
+            return res.status(404).json({ status: 'error', message: 'Employee not found' });
+        }
+
+        const chain = [empRows[0]];
+        let current = empRows[0];
+
+        // 2. Walk up the hierarchy (max 8 levels for safety)
+        for (let i = 0; i < 8; i++) {
+            if (!current.direct_supervisorid) break;
+            const { rows: bossRows } = await pool.query(`
+                SELECT emp_no, employe_name, employee_position, job_title, organization_unit, direct_supervisorid, direct_supervisor
+                FROM modena.users WHERE emp_no = $1 LIMIT 1
+            `, [current.direct_supervisorid]);
+
+            if (!bossRows.length) break;
+            // Prevent infinite loop
+            if (chain.find(c => c.emp_no === bossRows[0].emp_no)) break;
+
+            chain.unshift(bossRows[0]); // boss goes to top
+            current = bossRows[0];
+        }
+
+        res.json({ status: 'success', data: chain });
+    } catch (err) {
+        console.error('Org Chain Error:', err.message);
+        res.status(500).json({ status: 'error', message: err.message });
+    }
+});
+
+// ============ ROLE-BASED USER LOOKUP ============
+// Get users assigned to a specific role (e.g. FINANCE, ADMIN)
+app.get('/api/role-users/:role', async (req, res) => {
+    const { role } = req.params;
+    try {
+        // 1. Get emp_nos with this role from Supabase
+        const { data: roleData, error } = await supabase
+            .from('user_roles')
+            .select('emp_no')
+            .eq('role', role.toUpperCase());
+
+        if (error) throw error;
+        if (!roleData || roleData.length === 0) {
+            return res.json({ status: 'success', data: [] });
+        }
+
+        // 2. Get their names from Modena Identity
+        const empNos = roleData.map(r => r.emp_no);
+        const placeholders = empNos.map((_, i) => `$${i + 1}`).join(', ');
+        const { rows } = await pool.query(`
+            SELECT emp_no, employe_name, employee_position, organization_unit
+            FROM modena.users WHERE emp_no IN (${placeholders})
+        `, empNos);
+
+        res.json({ status: 'success', data: rows });
+    } catch (err) {
+        console.error('Role Users Error:', err.message);
+        res.status(500).json({ status: 'error', message: err.message });
+    }
+});
+
 // --- KASBON REQUESTS API ---
 
 // 1. GET ALL KASBON REQUESTS

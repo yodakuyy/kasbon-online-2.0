@@ -85,7 +85,7 @@ interface AppContextType {
     setRole: (role: UserRole) => void;
     requests: KasbonRequest[];
     stats: {
-        total2026: number;
+        totalYear: number;
         avgApproval: string;
         outstanding: number;
     };
@@ -198,20 +198,95 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setActivityLogs(prev => [newLog, ...prev]);
     };
 
+    // ===== APPROVAL MATRIX (from DB) =====
     const [matrixConfigs, setMatrixConfigs] = useState<MatrixConfig[]>([
+        // Fallback defaults until API loads
         { id: '1', minAmount: 1, maxAmount: 2000000, layers: ['Requestor', 'Dept. Head'] },
         { id: '2', minAmount: 2000001, maxAmount: 5000000, layers: ['Requestor', 'Dept. Head', 'Div. Head'] },
         { id: '3', minAmount: 5000001, maxAmount: 10000000, layers: ['Requestor', 'Dept. Head', 'Div. Head', 'COO'] },
         { id: '4', minAmount: 10000001, maxAmount: null, layers: ['Requestor', 'Dept. Head', 'Div. Head', 'COO', 'Finance'] },
     ]);
 
+    const fetchApprovalMatrix = async () => {
+        try {
+            const res = await fetch('http://localhost:3001/api/approval-matrix');
+            const json = await res.json();
+            if (json.status === 'success' && json.data?.length > 0) {
+                setMatrixConfigs(json.data.map((d: any) => ({
+                    id: d.id,
+                    minAmount: d.min_amount,
+                    maxAmount: d.max_amount,
+                    layers: d.layers || [],
+                })));
+            }
+        } catch (err) {
+            console.error('Failed to fetch approval matrix:', err);
+        }
+    };
+
+    // ===== ORG CHAIN (from Modena Identity) =====
+    const [orgChain, setOrgChain] = useState<any[]>([]);
+
+    const fetchOrgChain = async () => {
+        try {
+            const userStr = localStorage.getItem('kasbon_user');
+            const user = userStr ? JSON.parse(userStr) : null;
+            if (!user?.emp_no) return;
+
+            const res = await fetch(`http://localhost:3001/api/org-chain/${user.emp_no}`);
+            const json = await res.json();
+            if (json.status === 'success') {
+                setOrgChain(json.data);
+            }
+        } catch (err) {
+            console.error('Failed to fetch org chain:', err);
+        }
+    };
+
+    // ===== FINANCE USERS (from user_roles + modena identity) =====
+    const [financeUsers, setFinanceUsers] = useState<any[]>([]);
+
+    const fetchFinanceUsers = async () => {
+        try {
+            const res = await fetch('http://localhost:3001/api/role-users/FINANCE');
+            const json = await res.json();
+            if (json.status === 'success') {
+                setFinanceUsers(json.data);
+            }
+        } catch (err) {
+            console.error('Failed to fetch finance users:', err);
+        }
+    };
+
+    useEffect(() => {
+        fetchApprovalMatrix();
+        fetchOrgChain();
+        fetchFinanceUsers();
+    }, []);
+
     const [deptSettings, setDeptSettings] = useState<DeptSetting[]>([
         { deptId: 'IT', deptName: 'IT Operation', maxSlots: 2, outstandingLimit: 5000000 },
         { deptId: 'MKT', deptName: 'Marketing', maxSlots: 2, outstandingLimit: 3000000 },
     ]);
 
-    const updateMatrixConfig = (config: MatrixConfig) => {
+    const updateMatrixConfig = async (config: MatrixConfig) => {
+        // Optimistic update locally
         setMatrixConfigs(prev => prev.map(c => c.id === config.id ? config : c));
+
+        // Save to DB
+        try {
+            await fetch(`http://localhost:3001/api/approval-matrix/${config.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    min_amount: config.minAmount,
+                    max_amount: config.maxAmount,
+                    layers: config.layers,
+                }),
+            });
+        } catch (err) {
+            console.error('Failed to update matrix config:', err);
+        }
     };
 
     const updateDeptSetting = (setting: DeptSetting) => {
@@ -312,21 +387,51 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
         const steps: ApprovalStep[] = [];
 
-        // Steps strictly from Matrix
+        // orgChain is ordered from TOP (CEO) → BOTTOM (you)
+        // So the last element is the requestor, second-to-last is Dept. Head, etc.
+        const chainLen = orgChain.length;
+        const selfIdx = chainLen - 1; // Index of requestor (YOU) in chain
+
+        // Helper: resolve a name from the chain by offset from the requestor
+        const getChainPerson = (levelsUp: number): string => {
+            const idx = selfIdx - levelsUp;
+            if (idx >= 0 && idx < chainLen) {
+                return orgChain[idx].employe_name || orgChain[idx].direct_supervisor || 'Unknown';
+            }
+            return 'Unknown';
+        };
+
+        // Map layer roles to real names from orgChain
+        const resolveApproverName = (layer: string): string => {
+            switch (layer) {
+                case 'Requestor':
+                    return currentUser.name;
+                case 'Dept. Head':
+                    // Direct supervisor = 1 level up
+                    return chainLen > 1 ? getChainPerson(1) : currentUser.atasanLangsung;
+                case 'Div. Head':
+                    // 2 levels up
+                    return chainLen > 2 ? getChainPerson(2) : 'HOD';
+                case 'COO':
+                    // 3 levels up (or higher)
+                    return chainLen > 3 ? getChainPerson(3) : 'COO';
+                case 'Finance':
+                    // Resolve from user_roles FINANCE assignment
+                    return financeUsers.length > 0 ? financeUsers[0].employe_name : 'Finance';
+                default:
+                    return layer;
+            }
+        };
+
         config.layers.forEach((layer) => {
-            let approverName = layer;
+            let approverName = resolveApproverName(layer);
             let status: 'PENDING' | 'APPROVED' = 'PENDING';
 
-            // Map roles to actual names (Mock)
             if (layer === 'Requestor') {
-                approverName = currentUser.name;
                 status = 'APPROVED';
             }
-            if (layer === 'Dept. Head') approverName = 'Raymond Tjahja';
-            if (layer === 'Div. Head') approverName = 'HOD Name';
-            let roleDisplay = layer;
 
-            // If it's an over-slot request, mark the Dept Head step specially
+            let roleDisplay = layer;
             if (isOverSlotRequest && layer === 'Dept. Head') {
                 roleDisplay = 'Dept. Head (Slot Approval)';
             }
@@ -340,12 +445,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             });
         });
 
-        // Add Finance at the end IF NOT in matrix and if it's the 10jt+ tier (backup logic)
-        // But user wants it in the layers, so we rely on matrix.
-        // For safety, if Finance is missing from all tiers, we can add it here.
+        // Backup: if Finance not in matrix but amount > 10jt, add it
         if (amount > 10000000 && !config.layers.includes('Finance')) {
             steps.push({
-                approverName: 'Admin Finance',
+                approverName: financeUsers.length > 0 ? financeUsers[0].employe_name : 'Finance',
                 role: 'Finance',
                 status: 'PENDING',
                 stepOrder: steps.length + 1
@@ -357,10 +460,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const setRole = (newRole: UserRole) => setRoleState(newRole);
 
+    const currentYear = new Date().getFullYear().toString();
+    const myRequests = requests.filter(r => r.requestor === currentUser.name);
+
     const stats = {
-        total2026: 12000000,
+        totalYear: myRequests
+            .filter(r => r.date.startsWith(currentYear) && !['REJECTED', 'REVOKED'].includes(r.status))
+            .reduce((acc, r) => acc + r.amount, 0),
         avgApproval: '1.2 hari',
-        outstanding: requests.filter(r => r.status !== 'SETTLED').reduce((acc, r) => acc + r.amount, 0)
+        outstanding: myRequests
+            .filter(r => !['SETTLED', 'REJECTED', 'REVOKED'].includes(r.status))
+            .reduce((acc, r) => acc + r.amount, 0)
     };
 
     const addRequest = async (newReq: Omit<KasbonRequest, 'id' | 'status' | 'isOverdue' | 'slot' | 'approvalPath' | 'currentStepIndex' | 'type'> & { type?: 'REGULAR' | 'OVER_SLOT' }) => {

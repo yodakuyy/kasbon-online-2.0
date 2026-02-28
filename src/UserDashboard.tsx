@@ -458,8 +458,8 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                         <div className="stat-value-big">Rp {stats.outstanding.toLocaleString()}</div>
                                     </div>
                                     <div className="stat-card-modern">
-                                        <span className="stat-label">Total 2026</span>
-                                        <div className="stat-value-big">Rp {stats.total2026.toLocaleString()}</div>
+                                        <span className="stat-label">Total Tahun Ini</span>
+                                        <div className="stat-value-big">Rp {stats.totalYear.toLocaleString()}</div>
                                     </div>
                                 </div>
                             </section>
