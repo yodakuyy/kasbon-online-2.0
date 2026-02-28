@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     LayoutDashboard,
     History,
@@ -22,7 +22,9 @@ import {
     Download,
     ShieldCheck,
     Save,
-    Trash2
+    Trash2,
+    Users,
+    X
 } from 'lucide-react';
 import { useApp, type KasbonRequest, type SlotRequest } from './context/AppContext';
 import NewRequestModal from './NewRequestModal';
@@ -30,6 +32,7 @@ import StatusTracker from './StatusTracker';
 import ApprovalScreen from './ApprovalScreen';
 import RealisasiScreen from './RealisasiScreen';
 import Swal from 'sweetalert2';
+import axios from 'axios';
 
 const SlotRequestForm: React.FC<{ currentSlots: number, onBack: () => void, onSubmit: (data: { reason: string, requestedSlots: number }) => void }> = ({ currentSlots, onBack, onSubmit }) => {
     const [reason, setReason] = useState('');
@@ -79,11 +82,24 @@ const SlotRequestForm: React.FC<{ currentSlots: number, onBack: () => void, onSu
     );
 };
 
-const UserDashboard: React.FC = () => {
+interface UserDashboardProps {
+    loggedInUser?: {
+        emp_no: string;
+        name: string;
+        email: string;
+        position: string;
+        department: string;
+        role: string;
+        direct_supervisorid: string;
+        direct_supervisor: string;
+    };
+    onLogout?: () => void;
+}
+
+const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout }) => {
     const {
-        requests, currentUser, stats,
-        matrixConfigs, deptSettings,
-        updateMatrixConfig, updateDeptSetting,
+        requests, currentUser, stats, setRole,
+        matrixConfigs, deptSettings, updateMatrixConfig,
         slotRequests, addSlotRequest, updateSlotRequest,
         slotMatrix, updateSlotMatrix, activityLogs,
         revokeRequest
@@ -93,7 +109,150 @@ const UserDashboard: React.FC = () => {
     const [currentView, setCurrentView] = useState<string>('DASHBOARD');
     const [selectedRequest, setSelectedRequest] = useState<KasbonRequest | null>(null);
     const [selectedSlotReq, setSelectedSlotReq] = useState<SlotRequest | null>(null);
-    const [settingsTab, setSettingsTab] = useState<'MATRIX' | 'DEPT' | 'SLOT' | 'LOGS'>('MATRIX');
+    const [settingsTab, setSettingsTab] = useState<'MATRIX' | 'DEPT' | 'SLOT' | 'LOGS' | 'REMINDER'>('MATRIX');
+
+    // Admin User Management State
+    const [modenaUsers, setModenaUsers] = useState<any[]>([]);
+    const [loadingUsers, setLoadingUsers] = useState(false);
+    const [userListPage, setUserListPage] = useState(1);
+    const [userSearchTerm, setUserSearchTerm] = useState('');
+    const [selectedOrgUser, setSelectedOrgUser] = useState<any>(null);
+    const [showOrgModal, setShowOrgModal] = useState(false);
+    const [orgChain, setOrgChain] = useState<any[]>([]);
+    const usersPerPage = 10;
+
+    // Department Settings State (Cost Center based)
+    const [costCenterDepts, setCostCenterDepts] = useState<any[]>([]);
+    const [loadingDepts, setLoadingDepts] = useState(false);
+    const [deptSearchTerm, setDeptSearchTerm] = useState('');
+    const [deptPage, setDeptPage] = useState(1);
+    const deptsPerPage = 15;
+
+    const fetchCostCenterDepts = () => {
+        setLoadingDepts(true);
+        axios.get('http://localhost:3001/api/departments')
+            .then((res: any) => {
+                if (res.data?.data) setCostCenterDepts(res.data.data);
+            })
+            .catch((err: any) => console.error('Error fetching departments:', err))
+            .finally(() => setLoadingDepts(false));
+    };
+
+    const handleSaveDeptSetting = async (dept: any) => {
+        try {
+            await axios.post('http://localhost:3001/api/department-settings', {
+                cost_center_code: dept.cost_center_code,
+                name: dept.name,
+                max_slots: dept.max_slots,
+                outstanding_limit: dept.outstanding_limit,
+            });
+            Swal.fire({ icon: 'success', title: 'Saved!', text: `Settings for ${dept.name} updated.`, timer: 1500, showConfirmButton: false });
+        } catch {
+            Swal.fire({ icon: 'error', title: 'Error', text: 'Gagal menyimpan settings.' });
+        }
+    };
+
+    const fetchModenaUsers = () => {
+        setLoadingUsers(true);
+        axios.get('http://localhost:3001/api/users/me')
+            .then((res: any) => {
+                if (res.data && res.data.data) {
+                    setModenaUsers(res.data.data);
+                }
+            })
+            .catch((err: any) => console.error('Error fetching Modena users:', err))
+            .finally(() => setLoadingUsers(false));
+    };
+
+    useEffect(() => {
+        if (currentView === 'ADMIN_USERS') {
+            fetchModenaUsers();
+        }
+        if (currentView === 'ADMIN_GOVERNANCE' && settingsTab === 'DEPT') {
+            fetchCostCenterDepts();
+        }
+    }, [currentView, settingsTab]);
+
+    const handleAssignRole = async (user: any) => {
+        const { value: role } = await Swal.fire({
+            title: `Assign Role for ${user.employe_name || user.first_name}`,
+            input: 'select',
+            inputOptions: {
+                'USER': 'Regular User',
+                'APPROVER': 'Approver (HOD)',
+                'FINANCE': 'Finance Team',
+                'ADMIN': 'System Admin'
+            },
+            inputValue: user.role || 'USER',
+            inputPlaceholder: 'Pilih role akses...',
+            showCancelButton: true,
+            confirmButtonColor: '#796cf2'
+        });
+
+        if (role) {
+            try {
+                const res = await axios.post('http://localhost:3001/api/users/role', {
+                    emp_no: user.emp_no,
+                    role: role
+                });
+
+                if (res.data.status === 'success') {
+                    Swal.fire({
+                        icon: 'success',
+                        title: 'Role Updated!',
+                        text: `User ${user.emp_no} has been assigned as ${role}`,
+                        confirmButtonColor: '#796cf2'
+                    });
+                    fetchModenaUsers();
+                }
+            } catch (err: any) {
+                Swal.fire({
+                    icon: 'error',
+                    title: 'Oops...',
+                    text: err.response?.data?.message || 'Failed to update role'
+                });
+            }
+        }
+    };
+
+    const buildOrgChain = (user: any) => {
+        const chain = [user];
+        let current = user;
+
+        // Limits safely to 6 levels
+        for (let i = 0; i < 6; i++) {
+            if (!current.direct_supervisorid) break;
+            const boss = modenaUsers.find(u => u.emp_no === current.direct_supervisorid);
+            if (boss && !chain.find(c => c.emp_no === boss.emp_no)) {
+                chain.unshift(boss); // Add boss to the top
+                current = boss;
+            } else {
+                break;
+            }
+        }
+        setOrgChain(chain);
+        setSelectedOrgUser(user);
+        setShowOrgModal(true);
+    };
+
+    const filteredModenaUsers = modenaUsers
+        .filter(u => {
+            const term = userSearchTerm.toLowerCase();
+            return (u.employe_name || u.first_name || '').toLowerCase().includes(term) ||
+                (u.emp_no || '').toLowerCase().includes(term);
+        })
+        .sort((a, b) => {
+            const aActive = a.employee_status === 'Active' ? 1 : 0;
+            const bActive = b.employee_status === 'Active' ? 1 : 0;
+            if (aActive !== bActive) return bActive - aActive; // Active di atas
+
+            const aName = (a.employe_name || a.first_name || '').toLowerCase();
+            const bName = (b.employe_name || b.first_name || '').toLowerCase();
+            return aName.localeCompare(bName);
+        });
+
+    const totalUserPages = Math.ceil(filteredModenaUsers.length / usersPerPage);
+    const paginatedUsers = filteredModenaUsers.slice((userListPage - 1) * usersPerPage, userListPage * usersPerPage);
 
     const availableLayers = ['Requestor', 'Dept. Head', 'Div. Head', 'COO', 'Finance'];
 
@@ -122,7 +281,7 @@ const UserDashboard: React.FC = () => {
         { title: 'Total Kasbon', value: 'Rp 450.250.000', icon: <Wallet size={20} />, color: '#2563eb', change: '+12.5%' },
         { title: 'Outstanding', value: 'Rp 125.400.000', icon: <Clock size={20} />, color: '#f59e0b', change: '8 Requests' },
         { title: 'Overdue Settlement', value: '3 Karyawan', icon: <AlertCircle size={20} />, color: '#ef4444', change: 'Action Required' },
-        { title: 'Disbursed (This Week)', value: 'Rp 45.000.000', icon: <CheckCircle2 size={20} />, color: '#10b981', change: 'H-2 Disbursement' },
+        { title: 'Disbursed (This Week)', value: 'Rp 45.000.000', icon: <CheckCircle2 size={20} />, color: '#796cf2', change: 'H-2 Disbursement' },
     ];
 
     const allRequestsSummary = [
@@ -136,7 +295,7 @@ const UserDashboard: React.FC = () => {
         if (overdue && status !== 'SETTLED' && status !== 'REVOKED') return '#ef4444';
         switch (status) {
             case 'PENDING': return '#f59e0b';
-            case 'APPROVED': return '#10b981';
+            case 'APPROVED': return '#796cf2';
             case 'DISBURSED': return '#3b82f6';
             case 'SETTLED': return '#64748b';
             case 'REJECTED': return '#ef4444';
@@ -169,47 +328,76 @@ const UserDashboard: React.FC = () => {
                             className={`nav-btn ${currentView === 'REQUEST_SLOT' ? 'active' : ''}`}
                             onClick={() => setCurrentView('REQUEST_SLOT')}
                         ><PlusSquare size={20} /> Slot Tambahan</button>
-                        <button
-                            className={`nav-btn ${currentView.startsWith('APPROVAL') ? 'active' : ''}`}
-                            onClick={() => setCurrentView('APPROVAL_LIST')}
-                        ><CheckSquare size={20} /> Persetujuan</button>
+                        {['APPROVER', 'FINANCE', 'ADMIN'].includes(currentUser.role) && (
+                            <button
+                                className={`nav-btn ${currentView.startsWith('APPROVAL') ? 'active' : ''}`}
+                                onClick={() => setCurrentView('APPROVAL_LIST')}
+                            ><CheckSquare size={20} /> Persetujuan</button>
+                        )}
 
-                        <div className="nav-section-label admin-label">SYSTEM ADMINISTRATION</div>
-                        <button
-                            className={`nav-btn ${currentView === 'ADMIN_OVERVIEW' ? 'active' : ''}`}
-                            onClick={() => setCurrentView('ADMIN_OVERVIEW')}
-                        ><LayoutDashboard size={20} /> Admin Overview</button>
-                        <button
-                            className={`nav-btn ${currentView === 'ADMIN_REQUESTS' ? 'active' : ''}`}
-                            onClick={() => setCurrentView('ADMIN_REQUESTS')}
-                        ><FileText size={20} /> All Requests</button>
-                        <button
-                            className={`nav-btn ${currentView === 'ADMIN_GOVERNANCE' ? 'active' : ''}`}
-                            onClick={() => setCurrentView('ADMIN_GOVERNANCE')}
-                        ><ShieldCheck size={20} /> Governance</button>
-                        <button
-                            className={`nav-btn ${currentView === 'ADMIN_SETTINGS' ? 'active' : ''}`}
-                            onClick={() => setCurrentView('ADMIN_SETTINGS')}
-                        ><Settings size={20} /> Settings</button>
+                        {currentUser.role === 'ADMIN' && (
+                            <>
+                                <div className="nav-section-label admin-label">SYSTEM ADMINISTRATION</div>
+                                <button
+                                    className={`nav-btn ${currentView === 'ADMIN_OVERVIEW' ? 'active' : ''}`}
+                                    onClick={() => setCurrentView('ADMIN_OVERVIEW')}
+                                ><LayoutDashboard size={20} /> Admin Overview</button>
+                                <button
+                                    className={`nav-btn ${currentView === 'ADMIN_REQUESTS' ? 'active' : ''}`}
+                                    onClick={() => setCurrentView('ADMIN_REQUESTS')}
+                                ><FileText size={20} /> All Requests</button>
+                                <button
+                                    className={`nav-btn ${currentView === 'ADMIN_USERS' ? 'active' : ''}`}
+                                    onClick={() => setCurrentView('ADMIN_USERS')}
+                                ><Users size={20} /> User Management</button>
+                                <button
+                                    className={`nav-btn ${currentView === 'ADMIN_GOVERNANCE' ? 'active' : ''}`}
+                                    onClick={() => setCurrentView('ADMIN_GOVERNANCE')}
+                                ><ShieldCheck size={20} /> Governance</button>
+                                <button
+                                    className={`nav-btn ${currentView === 'ADMIN_SETTINGS' ? 'active' : ''}`}
+                                    onClick={() => setCurrentView('ADMIN_SETTINGS')}
+                                ><Settings size={20} /> Settings</button>
+                            </>
+                        )}
 
-                        <div className="nav-section-label finance-label">FINANCE OPERATIONS</div>
-                        <button
-                            className={`nav-btn ${currentView === 'FINANCE_APPROVAL' ? 'active' : ''}`}
-                            onClick={() => setCurrentView('FINANCE_APPROVAL')}
-                        ><CheckSquare size={20} /> Finance Approvals</button>
-                        <button
-                            className={`nav-btn ${currentView === 'FINANCE_REALISASI' ? 'active' : ''}`}
-                            onClick={() => setCurrentView('FINANCE_REALISASI')}
-                        ><Wallet size={20} /> Review Realisasi</button>
-                        <button
-                            className={`nav-btn ${currentView === 'FINANCE_WAITING_SETTLEMENT' ? 'active' : ''}`}
-                            onClick={() => setCurrentView('FINANCE_WAITING_SETTLEMENT')}
-                        ><Clock size={20} /> Belum Realisasi</button>
+                        {['FINANCE', 'ADMIN'].includes(currentUser.role) && (
+                            <>
+                                <div className="nav-section-label finance-label">FINANCE OPERATIONS</div>
+                                <button
+                                    className={`nav-btn ${currentView === 'FINANCE_APPROVAL' ? 'active' : ''}`}
+                                    onClick={() => setCurrentView('FINANCE_APPROVAL')}
+                                ><CheckSquare size={20} /> Finance Approvals</button>
+                                <button
+                                    className={`nav-btn ${currentView === 'FINANCE_REALISASI' ? 'active' : ''}`}
+                                    onClick={() => setCurrentView('FINANCE_REALISASI')}
+                                ><Wallet size={20} /> Review Realisasi</button>
+                                <button
+                                    className={`nav-btn ${currentView === 'FINANCE_WAITING_SETTLEMENT' ? 'active' : ''}`}
+                                    onClick={() => setCurrentView('FINANCE_WAITING_SETTLEMENT')}
+                                ><Clock size={20} /> Belum Realisasi</button>
+                            </>
+                        )}
                     </nav>
                 </div>
 
-                <div className="sidebar-footer">
-                    <button className="logout-btn"><LogOut size={18} /> Keluar</button>
+                <div className="sidebar-footer" style={{ padding: '20px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {import.meta.env.DEV && (
+                        <div className="role-switcher" style={{ background: '#1e293b', padding: '12px', borderRadius: '8px' }}>
+                            <span style={{ fontSize: '0.7rem', color: '#94a3b8', textTransform: 'uppercase', marginBottom: '8px', display: 'block' }}>Simulasi Role (Testing):</span>
+                            <select
+                                value={currentUser.role}
+                                onChange={(e) => setRole(e.target.value as any)}
+                                style={{ width: '100%', background: '#0f172a', color: 'white', border: '1px solid #334155', padding: '8px', borderRadius: '6px', fontSize: '0.8rem' }}
+                            >
+                                <option value="USER">1. User (Employee)</option>
+                                <option value="APPROVER">2. Approver (Manager)</option>
+                                <option value="FINANCE">3. Finance Team</option>
+                                <option value="ADMIN">4. System Admin</option>
+                            </select>
+                        </div>
+                    )}
+                    <button className="logout-btn" style={{ width: '100%' }} onClick={onLogout}><LogOut size={18} /> Keluar</button>
                 </div>
             </aside>
 
@@ -229,11 +417,15 @@ const UserDashboard: React.FC = () => {
                             <span className="dot"></span>
                         </div>
                         <div className="profile-text-flex">
-                            <span className="user-name-mini">{currentUser.name}</span>
-                            <span className="user-role-mini">Super Admin</span>
+                            <span className="user-name-mini">{loggedInUser?.name || currentUser.name}</span>
+                            <span className="user-role-mini">
+                                {currentUser.role === 'ADMIN' ? 'Super Admin' :
+                                    currentUser.role === 'FINANCE' ? 'Finance Team' :
+                                        currentUser.role === 'APPROVER' ? 'Manager (HOD)' : 'Employee'}
+                            </span>
                         </div>
                         <div className="user-avatar-mini">
-                            <img src="https://ui-avatars.com/api/?name=Fahmi+Ilmawan&background=10b981&color=fff" alt="avatar" />
+                            <img src="https://ui-avatars.com/api/?name=Fahmi+Ilmawan&background=796cf2&color=fff" alt="avatar" />
                         </div>
                     </div>
                 </header>
@@ -243,15 +435,20 @@ const UserDashboard: React.FC = () => {
                     {currentView === 'DASHBOARD' && (
                         <>
                             <section className="dashboard-hero">
-                                <div className="greeting">
-                                    <h1>Halo, {currentUser.name.split(' ')[0]} 👋</h1>
-                                    <p>Departemen: <strong>{currentUser.dept}</strong></p>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <div className="greeting">
+                                        <h1>Halo, {currentUser.name.split(' ')[0]} 👋</h1>
+                                        <p>Departemen: <strong>{currentUser.dept}</strong></p>
+                                    </div>
+                                    <button className="btn-add-kasbon" onClick={() => setIsModalOpen(true)}>
+                                        <Plus size={20} /> Ajukan Kasbon Baru
+                                    </button>
                                 </div>
 
                                 <div className="stats-row">
                                     <div className="stat-card-modern">
                                         <div className="stat-label-flex">
-                                            <CheckCircle2 size={16} color="#10b981" />
+                                            <CheckCircle2 size={16} color="#796cf2" />
                                             <span>Active Kasbon</span>
                                         </div>
                                         <div className="stat-value-big">{activeKasbonCount} / 2</div>
@@ -312,11 +509,6 @@ const UserDashboard: React.FC = () => {
                                     ))}
                                 </div>
 
-                                <div className="action-footer">
-                                    <button className="btn-add-kasbon" onClick={() => setIsModalOpen(true)}>
-                                        <Plus size={20} /> Ajukan Kasbon Baru
-                                    </button>
-                                </div>
                             </section>
                         </>
                     )}
@@ -406,7 +598,7 @@ const UserDashboard: React.FC = () => {
                             <div className="approval-list-modern">
                                 {requests.filter(r => r.status === 'PENDING').length === 0 && slotRequests.filter(s => s.status === 'PENDING').length === 0 ? (
                                     <div className="empty-state-card">
-                                        <CheckCircle2 size={48} color="#10b981" />
+                                        <CheckCircle2 size={48} color="#796cf2" />
                                         <p>Semua persetujuan sudah selesai dikerjakan!</p>
                                     </div>
                                 ) : (
@@ -500,7 +692,7 @@ const UserDashboard: React.FC = () => {
                                             title: 'Berhasil Setujui!',
                                             html: `NOTIFIKASI EMAIL TERKIRIM KE FINANCE:<br/><br/>Slot Departemen <b>${selectedSlotReq.department}</b> telah ditambah menjadi <b>${selectedSlotReq.requestedSlots} Slots</b>.`,
                                             icon: 'success',
-                                            confirmButtonColor: '#10b981'
+                                            confirmButtonColor: '#796cf2'
                                         });
                                     }}>Setujui & Notif Finance</button>
                                 </div>
@@ -525,7 +717,7 @@ const UserDashboard: React.FC = () => {
                                     title: 'Permintaan Dikirim!',
                                     text: 'Permintaan tambah slot sudah diajukan ke Dept. Head!',
                                     icon: 'success',
-                                    confirmButtonColor: '#10b981'
+                                    confirmButtonColor: '#796cf2'
                                 });
                             }}
                         />
@@ -636,6 +828,10 @@ const UserDashboard: React.FC = () => {
                                     onClick={() => setSettingsTab('SLOT')}
                                 >Slot Policies</button>
                                 <button
+                                    className={`tab-btn ${settingsTab === 'REMINDER' ? 'active' : ''}`}
+                                    onClick={() => setSettingsTab('REMINDER')}
+                                >Reminder Matrix</button>
+                                <button
                                     className={`tab-btn ${settingsTab === 'LOGS' ? 'active' : ''}`}
                                     onClick={() => setSettingsTab('LOGS')}
                                 >Activity Logs</button>
@@ -707,46 +903,213 @@ const UserDashboard: React.FC = () => {
                                     </div>
                                 )}
 
-                                {settingsTab === 'DEPT' && (
-                                    <div className="table-unified">
-                                        <table className="dept-table-admin">
-                                            <thead>
-                                                <tr>
-                                                    <th>Department</th>
-                                                    <th>Dept ID</th>
-                                                    <th style={{ width: '150px' }}>Max Slots</th>
-                                                    <th style={{ width: '200px' }}>Limit (IDR)</th>
-                                                    <th style={{ width: '100px' }}>Action</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {deptSettings.map(dept => (
-                                                    <tr key={dept.deptId}>
-                                                        <td><strong>{dept.deptName}</strong></td>
-                                                        <td><span className="dept-code-tag">{dept.deptId}</span></td>
-                                                        <td>
-                                                            <input
-                                                                type="number"
-                                                                className="inline-setting-input"
-                                                                value={dept.maxSlots}
-                                                                onChange={(e) => updateDeptSetting({ ...dept, maxSlots: parseInt(e.target.value) })}
-                                                            />
-                                                        </td>
-                                                        <td>
-                                                            <input
-                                                                type="number"
-                                                                className="inline-setting-input"
-                                                                value={dept.outstandingLimit}
-                                                                onChange={(e) => updateDeptSetting({ ...dept, outstandingLimit: parseInt(e.target.value) })}
-                                                            />
-                                                        </td>
-                                                        <td>
-                                                            <button className="btn-save-inline" title="Update Policy"><Save size={16} /></button>
-                                                        </td>
+                                {settingsTab === 'DEPT' && (() => {
+                                    const filteredDepts = costCenterDepts.filter(d =>
+                                        d.name.toLowerCase().includes(deptSearchTerm.toLowerCase()) ||
+                                        d.cost_center_code.toLowerCase().includes(deptSearchTerm.toLowerCase())
+                                    );
+                                    const totalDeptPages = Math.ceil(filteredDepts.length / deptsPerPage);
+                                    const pagedDepts = filteredDepts.slice((deptPage - 1) * deptsPerPage, deptPage * deptsPerPage);
+
+                                    return (
+                                        <div className="animate-fade-in">
+                                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', gap: '12px', flexWrap: 'wrap' }}>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                                    <span style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 600 }}>
+                                                        {filteredDepts.length} departemen (Cost Center)
+                                                    </span>
+                                                    {loadingDepts && <span style={{ fontSize: '0.75rem', color: '#796cf2' }}>Loading...</span>}
+                                                </div>
+                                                <div style={{ position: 'relative', width: '280px' }}>
+                                                    <Search size={16} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                                                    <input
+                                                        type="text"
+                                                        placeholder="Cari nama atau kode CC..."
+                                                        value={deptSearchTerm}
+                                                        onChange={(e) => { setDeptSearchTerm(e.target.value); setDeptPage(1); }}
+                                                        style={{ width: '100%', padding: '8px 12px 8px 34px', borderRadius: '8px', border: '1px solid #e2e8f0', fontSize: '0.8rem', outline: 'none' }}
+                                                    />
+                                                </div>
+                                            </div>
+
+                                            <div className="table-unified">
+                                                <table className="dept-table-admin">
+                                                    <thead>
+                                                        <tr>
+                                                            <th style={{ width: '140px' }}>Cost Center</th>
+                                                            <th>Department Name</th>
+                                                            <th style={{ width: '120px' }}>Max Slots</th>
+                                                            <th style={{ width: '180px' }}>Outstanding Limit</th>
+                                                            <th style={{ width: '80px' }}>Action</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {pagedDepts.map(dept => (
+                                                            <tr key={dept.cost_center_code}>
+                                                                <td><span className="dept-code-tag">{dept.cost_center_code}</span></td>
+                                                                <td><strong>{dept.name}</strong></td>
+                                                                <td>
+                                                                    <input
+                                                                        type="number"
+                                                                        className="inline-setting-input"
+                                                                        value={dept.max_slots}
+                                                                        min={1}
+                                                                        onChange={(e) => {
+                                                                            setCostCenterDepts(prev => prev.map(d =>
+                                                                                d.cost_center_code === dept.cost_center_code ? { ...d, max_slots: parseInt(e.target.value) || 1 } : d
+                                                                            ));
+                                                                        }}
+                                                                    />
+                                                                </td>
+                                                                <td>
+                                                                    <input
+                                                                        type="number"
+                                                                        className="inline-setting-input"
+                                                                        value={dept.outstanding_limit}
+                                                                        min={0}
+                                                                        step={500000}
+                                                                        onChange={(e) => {
+                                                                            setCostCenterDepts(prev => prev.map(d =>
+                                                                                d.cost_center_code === dept.cost_center_code ? { ...d, outstanding_limit: parseInt(e.target.value) || 0 } : d
+                                                                            ));
+                                                                        }}
+                                                                    />
+                                                                </td>
+                                                                <td>
+                                                                    <button className="btn-save-inline" title="Save" onClick={() => handleSaveDeptSetting(dept)}>
+                                                                        <Save size={16} />
+                                                                    </button>
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                        {pagedDepts.length === 0 && (
+                                                            <tr><td colSpan={5} style={{ textAlign: 'center', padding: '24px', color: '#94a3b8' }}>
+                                                                {loadingDepts ? 'Memuat data...' : 'Tidak ada departemen ditemukan.'}
+                                                            </td></tr>
+                                                        )}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+
+                                            {/* Pagination */}
+                                            {totalDeptPages > 1 && (
+                                                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '8px', marginTop: '16px' }}>
+                                                    <button
+                                                        onClick={() => setDeptPage(p => Math.max(1, p - 1))}
+                                                        disabled={deptPage === 1}
+                                                        style={{ padding: '6px 14px', borderRadius: '8px', border: '1px solid #e2e8f0', background: 'white', cursor: deptPage === 1 ? 'not-allowed' : 'pointer', opacity: deptPage === 1 ? 0.4 : 1, fontSize: '0.8rem', fontWeight: 600 }}
+                                                    >←</button>
+                                                    <span style={{ fontSize: '0.8rem', color: '#64748b', fontWeight: 600 }}>
+                                                        {deptPage} / {totalDeptPages}
+                                                    </span>
+                                                    <button
+                                                        onClick={() => setDeptPage(p => Math.min(totalDeptPages, p + 1))}
+                                                        disabled={deptPage === totalDeptPages}
+                                                        style={{ padding: '6px 14px', borderRadius: '8px', border: '1px solid #e2e8f0', background: 'white', cursor: deptPage === totalDeptPages ? 'not-allowed' : 'pointer', opacity: deptPage === totalDeptPages ? 0.4 : 1, fontSize: '0.8rem', fontWeight: 600 }}
+                                                    >→</button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })()}
+
+                                {settingsTab === 'REMINDER' && (
+                                    <div className="reminder-matrix-container animate-fade-in">
+                                        <div className="reminder-table-wrapper">
+                                            <table className="reminder-table-premium">
+                                                <thead>
+                                                    <tr className="main-header">
+                                                        <th rowSpan={2}>Divisi Pemohon</th>
+                                                        <th rowSpan={2}>Urutan Pengingat</th>
+                                                        <th colSpan={6} className="text-center">Notifikasi kepada (Notify to)</th>
+                                                        <th rowSpan={2}>Diketahui oleh</th>
+                                                        <th rowSpan={2}>Waktu Notifikasi</th>
                                                     </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
+                                                    <tr className="sub-header">
+                                                        <th>Requestor</th>
+                                                        <th>Branch Manager</th>
+                                                        <th>Direct Superior</th>
+                                                        <th>Head of Dept.</th>
+                                                        <th>VP</th>
+                                                        <th>EVP</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    {/* Commercial Division */}
+                                                    <tr>
+                                                        <td rowSpan={3} className="dept-cell">Commercial Division</td>
+                                                        <td>Pengingat Pertama</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="dash-cell">-</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="dash-cell">-</td>
+                                                        <td className="dash-cell">-</td>
+                                                        <td className="dash-cell">-</td>
+                                                        <td>1 hari sejak jatuh tempo</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>Pengingat Kedua</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="dash-cell">-</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="dash-cell">-</td>
+                                                        <td className="ack-cell">EVP of Commercial</td>
+                                                        <td>7 hari setelah Pengingat 1</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>Pengingat Ketiga</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="dash-cell">-</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="ack-cell">EVP of Finance & Gov</td>
+                                                        <td>7 hari setelah Pengingat 2</td>
+                                                    </tr>
+
+                                                    {/* Other Division */}
+                                                    <tr className="divider-row"><td colSpan={10}></td></tr>
+                                                    <tr>
+                                                        <td rowSpan={3} className="dept-cell">Other Division</td>
+                                                        <td>Pengingat Pertama</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="dash-cell">-</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="dash-cell">-</td>
+                                                        <td className="dash-cell">-</td>
+                                                        <td className="dash-cell">-</td>
+                                                        <td>1 hari sejak jatuh tempo</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>Pengingat Kedua</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="dash-cell">-</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="dash-cell">-</td>
+                                                        <td className="ack-cell">Requestor EVP</td>
+                                                        <td>7 hari setelah Pengingat 1</td>
+                                                    </tr>
+                                                    <tr>
+                                                        <td>Pengingat Ketiga</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="dash-cell">-</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="check-cell">✓</td>
+                                                        <td className="ack-cell">EVP of Finance & Gov</td>
+                                                        <td>7 hari setelah Pengingat 2</td>
+                                                    </tr>
+                                                </tbody>
+                                            </table>
+                                        </div>
                                     </div>
                                 )}
 
@@ -909,7 +1272,7 @@ const UserDashboard: React.FC = () => {
                                                                             title: 'Berhasil!',
                                                                             text: `Kasbon ${req.id} telah dicabut.`,
                                                                             icon: 'success',
-                                                                            confirmButtonColor: '#10b981'
+                                                                            confirmButtonColor: '#796cf2'
                                                                         });
                                                                     }
                                                                 }}
@@ -926,6 +1289,124 @@ const UserDashboard: React.FC = () => {
                                         </tbody>
                                     </table>
                                 </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {currentView === 'ADMIN_USERS' && (
+                        <div className="admin-overview-container">
+                            <div className="view-title-header">
+                                <div>
+                                    <h1>Identity & Configuration</h1>
+                                    <p style={{ color: '#64748b' }}>
+                                        Data tersinkronisasi langsung dengan <strong>Modena Identity DB (READ-ONLY)</strong>.
+                                    </p>
+                                </div>
+                                <div className="header-filters">
+                                    <div className="search-bar-unified">
+                                        <Search size={18} />
+                                        <input
+                                            type="text"
+                                            placeholder="Cari nama atau NIP..."
+                                            value={userSearchTerm}
+                                            onChange={e => {
+                                                setUserSearchTerm(e.target.value);
+                                                setUserListPage(1);
+                                            }}
+                                        />
+                                    </div>
+                                </div>
+                            </div>
+                            <div className="admin-table-card" style={{ marginTop: '32px' }}>
+                                <div className="table-unified">
+                                    <table>
+                                        <thead>
+                                            <tr>
+                                                <th>NIP (Employee No)</th>
+                                                <th>Full Name</th>
+                                                <th>User Status</th>
+                                                <th>Kasbon Access Role</th>
+                                                <th>Action</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {loadingUsers ? (
+                                                <tr><td colSpan={5} style={{ textAlign: 'center', padding: '40px' }}>Loading Modena Users data...</td></tr>
+                                            ) : modenaUsers.length === 0 ? (
+                                                <tr><td colSpan={5} style={{ textAlign: 'center', padding: '40px' }}>No users found in Modena Database.</td></tr>
+                                            ) : (
+                                                paginatedUsers.map((user, idx) => (
+                                                    <tr key={idx}>
+                                                        <td><span className="badge-id-admin" style={{ background: '#f0fdf4', color: '#16a34a' }}>{user.emp_no || 'N/A'}</span></td>
+                                                        <td>
+                                                            <div
+                                                                style={{ display: 'flex', alignItems: 'center', gap: '12px', cursor: 'pointer' }}
+                                                                onClick={() => buildOrgChain(user)}
+                                                            >
+                                                                <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: '#796cf215', color: '#796cf2', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>
+                                                                    {(user.employe_name || user.first_name || 'U').charAt(0).toUpperCase()}
+                                                                </div>
+                                                                <div>
+                                                                    <span style={{ fontWeight: 600, color: '#1e293b', display: 'block' }}>{user.employe_name || user.first_name}</span>
+                                                                    <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{user.job_title || 'Employee'}</span>
+                                                                </div>
+                                                            </div>
+                                                        </td>
+                                                        <td>
+                                                            <span style={{ background: user.employee_status === 'Active' ? '#dcfce7' : '#f1f5f9', color: user.employee_status === 'Active' ? '#16a34a' : '#64748b', textTransform: 'capitalize', padding: '4px 10px', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 700 }}>
+                                                                {user.employee_status || 'Unknown'}
+                                                            </span>
+                                                        </td>
+                                                        <td>
+                                                            {user.role === 'ADMIN' ? (
+                                                                <span style={{ background: '#796cf2', color: 'white', padding: '4px 10px', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 700 }}>Super Admin</span>
+                                                            ) : user.role === 'FINANCE' ? (
+                                                                <span style={{ background: '#f59e0b', color: 'white', padding: '4px 10px', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 700 }}>Finance</span>
+                                                            ) : user.role === 'APPROVER' ? (
+                                                                <span style={{ background: '#3b82f6', color: 'white', padding: '4px 10px', borderRadius: '20px', fontSize: '0.75rem', fontWeight: 700 }}>Approver</span>
+                                                            ) : (
+                                                                <span style={{ color: '#64748b', fontWeight: 600 }}>Default (Employee)</span>
+                                                            )}
+                                                        </td>
+                                                        <td>
+                                                            <button
+                                                                className="btn-save-inline"
+                                                                style={{ padding: '6px 12px', fontSize: '0.75rem', background: 'white', color: '#1e293b', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '6px' }}
+                                                                onClick={() => handleAssignRole(user)}
+                                                            >
+                                                                <Settings size={14} /> Assign Role
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+
+                                {filteredModenaUsers.length > 0 && (
+                                    <div style={{ padding: '16px 24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #e2e8f0' }}>
+                                        <span style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 600 }}>
+                                            Showing {(userListPage - 1) * usersPerPage + 1} to {Math.min(userListPage * usersPerPage, filteredModenaUsers.length)} of {filteredModenaUsers.length} entries
+                                        </span>
+                                        <div style={{ display: 'flex', gap: '8px' }}>
+                                            <button
+                                                onClick={() => setUserListPage(prev => Math.max(prev - 1, 1))}
+                                                disabled={userListPage === 1}
+                                                style={{ padding: '6px 14px', borderRadius: '8px', border: '1px solid #e2e8f0', background: userListPage === 1 ? '#f8fafc' : 'white', color: userListPage === 1 ? '#cbd5e1' : '#475569', cursor: userListPage === 1 ? 'not-allowed' : 'pointer', fontWeight: 600, fontSize: '0.85rem' }}
+                                            >
+                                                Previous
+                                            </button>
+                                            <button
+                                                onClick={() => setUserListPage(prev => Math.min(prev + 1, totalUserPages))}
+                                                disabled={userListPage === totalUserPages}
+                                                style={{ padding: '6px 14px', borderRadius: '8px', border: '1px solid #e2e8f0', background: userListPage === totalUserPages ? '#f8fafc' : 'white', color: userListPage === totalUserPages ? '#cbd5e1' : '#475569', cursor: userListPage === totalUserPages ? 'not-allowed' : 'pointer', fontWeight: 600, fontSize: '0.85rem' }}
+                                            >
+                                                Next
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}
@@ -957,7 +1438,7 @@ const UserDashboard: React.FC = () => {
                                                 <td>Andi Suherman</td>
                                                 <td className="admin-amt">Rp 2.500.000</td>
                                                 <td><span className="layer-tag">Waiting Finance</span></td>
-                                                <td><button className="btn-save-inline" style={{ color: '#10b981' }}>Review & Approve</button></td>
+                                                <td><button className="btn-save-inline" style={{ color: '#796cf2' }}>Review & Approve</button></td>
                                             </tr>
                                         </tbody>
                                     </table>
@@ -1022,6 +1503,97 @@ const UserDashboard: React.FC = () => {
 
             {isModalOpen && <NewRequestModal onClose={() => setIsModalOpen(false)} />}
 
+            {/* ORGANIZATION HIERARCHY MODAL */}
+            {showOrgModal && (
+                <div className="modal-overlay-global" onClick={() => setShowOrgModal(false)}>
+                    <div
+                        className="modal-content-global animate-pop-up"
+                        style={{ width: '100%', maxWidth: '420px', padding: '0', overflow: 'hidden', borderRadius: '16px', background: 'white', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.25)' }}
+                        onClick={e => e.stopPropagation()}
+                    >
+                        {/* Header */}
+                        <div style={{ padding: '18px 24px', background: 'linear-gradient(135deg, #796cf2 0%, #6366f1 100%)', color: 'white', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div>
+                                <h2 style={{ fontSize: '1.05rem', fontWeight: 700, margin: 0 }}>Organization Hierarchy</h2>
+                                <p style={{ fontSize: '0.75rem', opacity: 0.85, margin: '2px 0 0' }}>Reporting structure</p>
+                            </div>
+                            <button onClick={() => setShowOrgModal(false)} style={{ background: 'rgba(255,255,255,0.2)', border: 'none', color: 'white', width: '30px', height: '30px', borderRadius: '50%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <X size={14} />
+                            </button>
+                        </div>
+
+                        {/* Body — Teams Style */}
+                        <div style={{ maxHeight: '65vh', overflowY: 'auto' }}>
+                            {orgChain.map((person, pIdx) => {
+                                const isSelected = person.emp_no === selectedOrgUser?.emp_no;
+                                const isLast = pIdx === orgChain.length - 1;
+                                return (
+                                    <div key={pIdx} style={{ position: 'relative' }}>
+                                        {/* Vertical connector line */}
+                                        {!isLast && (
+                                            <div style={{ position: 'absolute', left: '35px', top: '56px', bottom: '0', width: '2px', background: '#e2e8f0' }} />
+                                        )}
+                                        <div style={{
+                                            display: 'flex', alignItems: 'center', gap: '14px',
+                                            padding: '14px 20px',
+                                            background: isSelected ? '#f5f3ff' : 'white',
+                                            borderLeft: isSelected ? '3px solid #796cf2' : '3px solid transparent',
+                                            borderBottom: '1px solid #f1f5f9',
+                                            transition: 'all 0.15s',
+                                        }}>
+                                            {/* Avatar */}
+                                            <div style={{
+                                                width: '44px', height: '44px', borderRadius: '50%', flexShrink: 0,
+                                                background: isSelected ? '#796cf2' : '#f1f5f9',
+                                                color: isSelected ? 'white' : '#796cf2',
+                                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                fontWeight: 800, fontSize: '1rem',
+                                                border: isSelected ? '2px solid #796cf2' : '2px solid #e2e8f0',
+                                            }}>
+                                                {(person.employe_name || 'U').charAt(0).toUpperCase()}
+                                            </div>
+
+                                            {/* Info — 3 lines like Teams */}
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                                    <span style={{ fontWeight: 700, fontSize: '0.9rem', color: '#1e293b', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                        {person.employe_name || person.first_name}
+                                                    </span>
+                                                    {isSelected && (
+                                                        <span style={{ background: '#796cf2', color: 'white', fontSize: '0.55rem', fontWeight: 800, padding: '2px 6px', borderRadius: '4px', letterSpacing: '0.03em', flexShrink: 0 }}>
+                                                            YOU
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <span style={{ fontSize: '0.75rem', color: '#64748b', fontWeight: 500, display: 'block', marginTop: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                    {person.employee_position || person.job_title || 'Employee'}
+                                                </span>
+                                                <span style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: 600, display: 'block', marginTop: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                                                    {person.organization_unit || person.department || ''}
+                                                </span>
+                                            </div>
+
+                                            {/* Arrow for non-selected */}
+                                            {!isSelected && (
+                                                <ChevronRight size={16} color="#cbd5e1" style={{ flexShrink: 0 }} />
+                                            )}
+                                        </div>
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        {/* Footer */}
+                        <div style={{ padding: '14px 24px', borderTop: '1px solid #f1f5f9', textAlign: 'center' }}>
+                            <button onClick={() => setShowOrgModal(false)} style={{ background: '#f1f5f9', border: 'none', padding: '8px 28px', borderRadius: '8px', fontWeight: 700, color: '#475569', cursor: 'pointer', fontSize: '0.8rem' }}>
+                                Tutup
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+
             <style>{`
         .layout-modern { display: flex; width: 100vw; height: 100vh; background: #f8fafc; font-family: 'Outfit', sans-serif; overflow: hidden; }
         
@@ -1031,13 +1603,21 @@ const UserDashboard: React.FC = () => {
             display: flex; flex-direction: column; padding: 24px 0; color: #94a3b8;
         }
         .brand { padding: 0 24px; display: flex; align-items: center; gap: 10px; margin-bottom: 40px; font-size: 1.15rem; color: white; }
-        .brand-dot { width: 10px; height: 10px; border-radius: 50%; background: #10b981; }
-        .brand strong { color: #10b981; }
+        .brand-dot { width: 10px; height: 10px; border-radius: 50%; background: #796cf2; }
+        .brand strong { color: #796cf2; }
 
-        .sidebar-scrollable { flex: 1; overflow-y: auto; padding: 0 16px; }
+        .sidebar-scrollable { 
+            flex: 1; overflow-y: auto; padding: 0 16px; 
+            scrollbar-width: thin; 
+            scrollbar-color: #334155 transparent; 
+        }
+        .sidebar-scrollable::-webkit-scrollbar { width: 6px; }
+        .sidebar-scrollable::-webkit-scrollbar-track { background: transparent; }
+        .sidebar-scrollable::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+        .sidebar-scrollable::-webkit-scrollbar-thumb:hover { background: #475569; }
         .nav-section-label { font-size: 0.7rem; font-weight: 800; color: #475569; text-transform: uppercase; letter-spacing: 0.1em; margin: 24px 8px 12px; }
         .nav-section-label.admin-label { color: #8b5cf6; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 24px; }
-        .nav-section-label.finance-label { color: #10b981; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 24px; }
+        .nav-section-label.finance-label { color: #796cf2; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 24px; }
 
         .side-nav { display: flex; flex-direction: column; gap: 4px; }
         .nav-btn { 
@@ -1046,7 +1626,7 @@ const UserDashboard: React.FC = () => {
             transition: all 0.2s; border: none; cursor: pointer; text-align: left; width: 100%;
         }
         .nav-btn:hover { background: rgba(255,255,255,0.05); color: white; }
-        .nav-btn.active { background: #10b981; color: white; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3); }
+        .nav-btn.active { background: #796cf2; color: white; box-shadow: 0 4px 12px rgba(121, 108, 242, 0.3); }
 
         .sidebar-footer { padding: 20px 24px; border-top: 1px solid rgba(255,255,255,0.05); }
         .logout-btn { 
@@ -1085,10 +1665,10 @@ const UserDashboard: React.FC = () => {
         .active-kasbon-section { display: flex; flex-direction: column; gap: 24px; }
         .section-header h3 { font-size: 1.25rem; font-weight: 800; color: #0f172a; }
         .kasbon-item-modern { background: white; border-radius: 20px; padding: 24px 32px; display: flex; justify-content: space-between; align-items: center; border: 1px solid #f1f5f9; transition: all 0.2s; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.02); }
-        .kasbon-item-modern:hover { transform: translateX(8px); border-color: #10b981; box-shadow: 0 10px 15px -3px rgba(16, 185, 129, 0.1); }
+        .kasbon-item-modern:hover { transform: translateX(8px); border-color: #796cf2; box-shadow: 0 10px 15px -3px rgba(121, 108, 242, 0.1); }
         .kasbon-info-main { display: flex; flex-direction: column; gap: 6px; }
         .kasbon-meta-row { display: flex; align-items: center; gap: 12px; }
-        .kasbon-id { font-weight: 800; color: #10b981; font-size: 0.9rem; }
+        .kasbon-id { font-weight: 800; color: #796cf2; font-size: 0.9rem; }
         .kasbon-date-label { display: flex; align-items: center; gap: 4px; font-size: 0.75rem; color: #94a3b8; font-weight: 600; }
         .kasbon-amount { font-weight: 800; font-size: 1.35rem; color: #1e293b; margin: 2px 0; }
         .kasbon-requestor-info { font-size: 0.85rem; color: #64748b; font-weight: 500; }
@@ -1100,7 +1680,7 @@ const UserDashboard: React.FC = () => {
             border-radius: 30px; font-size: 0.85rem; font-weight: 750; cursor: pointer;
             transition: all 0.2s; box-shadow: 0 4px 6px rgba(0,0,0,0.1);
         }
-        .btn-realisasi-trigger:hover { background: #10b981; transform: translateY(-2px); }
+        .btn-realisasi-trigger:hover { background: #796cf2; transform: translateY(-2px); }
 
         .status-badge-modern { display: flex; align-items: center; gap: 8px; padding: 10px 20px; border-radius: 30px; font-size: 0.85rem; font-weight: 750; }
         .status-badge-modern.PENDING { background: #fffbeb; color: #b45309; border: 1px solid #fef3c7; }
@@ -1140,7 +1720,7 @@ const UserDashboard: React.FC = () => {
         .history-nominal { font-weight: 800; color: #1e293b; font-size: 1.1rem; }
         .history-realization { font-weight: 700; color: #64748b; font-size: 1rem; }
         .history-realization.warning { color: #f59e0b; }
-        .history-realization.success { color: #10b981; }
+        .history-realization.success { color: #796cf2; }
         
         .history-status-badge { padding: 8px 16px; border-radius: 30px; font-size: 0.8rem; font-weight: 800; display: inline-flex; align-items: center; gap: 6px; }
         .history-status-badge.SETTLED { background: #f0fdf4; color: #16a34a; border: 1px solid #dcfce7; }
@@ -1156,10 +1736,10 @@ const UserDashboard: React.FC = () => {
             background: white; border-radius: 20px; padding: 20px 24px; border: 1px solid #f1f5f9; 
             display: flex; align-items: center; justify-content: space-between; cursor: pointer; transition: all 0.2s;
         }
-        .approval-item-card:hover { transform: translateY(-4px); border-color: #10b981; box-shadow: 0 10px 20px -5px rgba(0,0,0,0.05); }
+        .approval-item-card:hover { transform: translateY(-4px); border-color: #796cf2; box-shadow: 0 10px 20px -5px rgba(0,0,0,0.05); }
         
         .a-item-left { display: flex; align-items: center; gap: 16px; flex: 1; }
-        .a-avatar { width: 44px; height: 44px; border-radius: 50%; background: #f1f5f9; color: #10b981; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 1.1rem; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        .a-avatar { width: 44px; height: 44px; border-radius: 50%; background: #f1f5f9; color: #796cf2; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 1.1rem; border: 2px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
         .a-info { display: flex; flex-direction: column; gap: 2px; }
         .a-info strong { color: #1e293b; font-size: 0.95rem; }
         .a-meta { display: flex; align-items: center; gap: 8px; }
@@ -1168,10 +1748,10 @@ const UserDashboard: React.FC = () => {
         
         .a-item-center { flex: 2; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
         .a-purpose { font-weight: 700; color: #475569; font-size: 0.9rem; }
-        .a-amount { font-weight: 800; color: #10b981; font-size: 1.1rem; }
+        .a-amount { font-weight: 800; color: #796cf2; font-size: 1.1rem; }
         
         .btn-review-now { display: flex; align-items: center; gap: 6px; background: #1e293b; color: white; border: none; padding: 8px 16px; border-radius: 10px; font-weight: 700; font-size: 0.85rem; cursor: pointer; transition: all 0.2s; }
-        .btn-review-now:hover { background: #10b981; }
+        .btn-review-now:hover { background: #796cf2; }
 
         .empty-state-card { background: white; border-radius: 24px; padding: 60px; text-align: center; border: 1px dashed #e2e8f0; display: flex; flex-direction: column; align-items: center; gap: 16px; }
         .empty-state-card p { color: #64748b; font-weight: 600; font-size: 1.1rem; }
@@ -1194,7 +1774,7 @@ const UserDashboard: React.FC = () => {
         .s-detail { display: flex; flex-direction: column; gap: 4px; }
         .s-detail span { font-size: 0.75rem; color: #94a3b8; font-weight: 800; text-transform: uppercase; }
         .s-detail strong { font-size: 1rem; color: #1e293b; }
-        .text-primary { color: #10b981 !important; }
+        .text-primary { color: #796cf2 !important; }
 
         /* --- SLOT FORM SCREEN --- */
         .slot-form-container { max-width: 600px; margin: 0 auto; width: 100%; }
@@ -1203,11 +1783,11 @@ const UserDashboard: React.FC = () => {
         .s-input label { font-size: 0.9rem; font-weight: 800; color: #475569; margin-bottom: 8px; display: block; }
         .s-input select, .s-input textarea { width: 100%; padding: 14px; border-radius: 12px; border: 1.5px solid #e2e8f0; font-family: inherit; font-size: 0.95rem; outline: none; transition: all 0.2s; }
         .slot-readonly-display { background: #f8fafc; padding: 16px; border-radius: 12px; border: 1.5px solid #e2e8f0; display: flex; align-items: center; gap: 12px; }
-        .slot-readonly-display strong { color: #10b981; font-size: 1.1rem; }
+        .slot-readonly-display strong { color: #796cf2; font-size: 1.1rem; }
         .slot-readonly-display span { color: #64748b; font-size: 0.85rem; font-weight: 500; }
-        .s-input select:focus, .s-input textarea:focus { border-color: #10b981; box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.1); }
-        .btn-submit-slot { background: #10b981; color: white; border: none; padding: 16px; border-radius: 14px; font-weight: 800; font-size: 1rem; cursor: pointer; transition: all 0.2s; margin-top: 12px; }
-        .btn-submit-slot:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(16, 185, 129, 0.2); }
+        .s-input select:focus, .s-input textarea:focus { border-color: #796cf2; box-shadow: 0 0 0 4px rgba(121, 108, 242, 0.1); }
+        .btn-submit-slot { background: #796cf2; color: white; border: none; padding: 16px; border-radius: 14px; font-weight: 800; font-size: 1rem; cursor: pointer; transition: all 0.2s; margin-top: 12px; }
+        .btn-submit-slot:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(121, 108, 242, 0.2); }
 
         .item-action-btn { background: #f8fafc; border: none; padding: 8px; border-radius: 10px; color: #94a3b8; cursor: pointer; transition: all 0.2s; }
         .item-action-btn:hover { background: #1e293b; color: white; }
@@ -1238,15 +1818,15 @@ const UserDashboard: React.FC = () => {
         /* Governance Styles */
         .settings-tabs { display: flex; gap: 12px; border-bottom: 1px solid #e2e8f0; padding-bottom: 2px; }
         .tab-btn { background: none; border: none; padding: 12px 24px; font-weight: 700; color: #64748b; cursor: pointer; position: relative; }
-        .tab-btn.active { color: #10b981; }
-        .tab-btn.active::after { content: ''; position: absolute; bottom: -2px; left: 0; right: 0; height: 3px; background: #10b981; border-radius: 10px; }
+        .tab-btn.active { color: #796cf2; }
+        .tab-btn.active::after { content: ''; position: absolute; bottom: -2px; left: 0; right: 0; height: 3px; background: #796cf2; border-radius: 10px; }
         
         .settings-content-card { background: white; padding: 32px; border-radius: 24px; border: 1px solid #e2e8f0; }
         .matrix-table-header { display: grid; grid-template-columns: 380px 1fr 80px; padding: 16px; background: #f8fafc; border-radius: 12px; font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 12px; }
         .matrix-row { display: grid; grid-template-columns: 380px 1fr 80px; padding: 16px; border-bottom: 1px solid #f1f5f9; align-items: center; }
         .range-inputs { display: flex; align-items: center; gap: 8px; }
         .range-inputs input { width: 140px; padding: 8px 12px; border-radius: 8px; border: 1px solid #e2e8f0; font-size: 0.85rem; font-weight: 700; text-align: right; }
-        .range-inputs input:focus { border-color: #10b981; outline: none; box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1); }
+        .range-inputs input:focus { border-color: #796cf2; outline: none; box-shadow: 0 0 0 3px rgba(121, 108, 242, 0.1); }
         .layer-tag { background: #f0fdf4; color: #16a34a; padding: 4px 12px; border-radius: 8px; font-size: 0.8rem; font-weight: 700; border: 1px solid #dcfce7; }
         .layer-tags-editor { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
         .layer-tag-editable { 
@@ -1259,14 +1839,14 @@ const UserDashboard: React.FC = () => {
             background: #f1f5f9; border: 1px dashed #cbd5e1; padding: 4px 8px; border-radius: 8px; 
             font-size: 0.75rem; font-weight: 700; color: #64748b; cursor: pointer; outline: none;
         }
-        .add-layer-select:hover { border-color: #10b981; color: #10b981; }
+        .add-layer-select:hover { border-color: #796cf2; color: #796cf2; }
         .btn-add-range { margin-top: 24px; background: none; border: 2px dashed #e2e8f0; width: 100%; padding: 16px; border-radius: 12px; color: #64748b; font-weight: 700; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; }
-        .btn-add-range:hover { border-color: #10b981; color: #10b981; }
+        .btn-add-range:hover { border-color: #796cf2; color: #796cf2; }
 
         .dept-table-admin td { padding: 12px 32px; border-bottom: 1px solid #f1f5f9; }
-        .dept-code-tag { font-size: 0.7rem; background: #1e293b; color: white; padding: 4px 8px; border-radius: 6px; font-weight: 800; }
+        .dept-code-tag { font-size: 0.75rem; background: #1e293b; color: white; padding: 6px 10px; border-radius: 6px; font-weight: 800; white-space: nowrap; display: inline-block; }
         .inline-setting-input { width: 100%; padding: 8px 12px; border-radius: 8px; border: 1px solid #e2e8f0; font-size: 0.85rem; font-weight: 700; color: #1e293b; }
-        .inline-setting-input:focus { border-color: #10b981; outline: none; box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.1); }
+        .inline-setting-input:focus { border-color: #796cf2; outline: none; box-shadow: 0 0 0 3px rgba(121, 108, 242, 0.1); }
         .btn-save-inline { background: #f1f5f9; border: none; padding: 8px; border-radius: 8px; color: #64748b; cursor: pointer; transition: all 0.2s; }
         .btn-save-inline:hover { background: #1e293b; color: white; }
 
@@ -1274,10 +1854,10 @@ const UserDashboard: React.FC = () => {
         .placeholder-view h1 { color: #1e293b; margin-bottom: 12px; }
 
         .btn-add-kasbon { 
-            background: #10b981; color: white; border: none; padding: 14px 28px;
+            background: #796cf2; color: white; border: none; padding: 14px 28px;
             border-radius: 14px; font-weight: 800; font-size: 1rem;
             display: flex; align-items: center; gap: 10px; cursor: pointer;
-            box-shadow: 0 10px 15px -3px rgba(16, 185, 129, 0.3);
+            box-shadow: 0 10px 15px -3px rgba(121, 108, 242, 0.3);
         }
 
         /* Missing Slot Approval Detail Styles */
@@ -1289,9 +1869,9 @@ const UserDashboard: React.FC = () => {
         .justification-box-modern p { font-size: 1rem; color: #92400e; font-style: italic; line-height: 1.6; font-weight: 500; margin: 0; }
         
         .approval-actions-footer { display: flex; gap: 16px; margin-top: 32px; border-top: 1px solid #f1f5f9; padding-top: 32px; }
-        .btn-approve-modern { flex: 1; background: #10b981; color: white; border: none; padding: 18px; border-radius: 16px; font-weight: 800; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; transition: all 0.2s; }
+        .btn-approve-modern { flex: 1; background: #796cf2; color: white; border: none; padding: 18px; border-radius: 16px; font-weight: 800; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 10px; transition: all 0.2s; }
         .btn-reject-modern { background: #fef2f2; color: #ef4444; border: 1.5px solid #fee2e2; padding: 18px 32px; border-radius: 16px; font-weight: 800; cursor: pointer; transition: all 0.2s; }
-        .btn-approve-modern:hover { transform: translateY(-2px); box-shadow: 0 10px 25px -5px rgba(16, 185, 129, 0.4); }
+        .btn-approve-modern:hover { transform: translateY(-2px); box-shadow: 0 10px 25px -5px rgba(121, 108, 242, 0.4); }
         .btn-reject-modern:hover { background: #fee2e2; }
 
         /* Activity Logs Styles */
@@ -1301,7 +1881,7 @@ const UserDashboard: React.FC = () => {
         .log-tag { font-size: 0.65rem; font-weight: 800; padding: 4px 8px; border-radius: 6px; }
         .tag-slot { background: #fff7ed; color: #f59e0b; border: 1px solid #ffedd5; }
         .tag-policy { background: #f0f9ff; color: #0ea5e9; border: 1px solid #e0f2fe; }
-        .tag-kasbon { background: #f0fdf4; color: #10b981; border: 1px solid #dcfce7; }
+        .tag-kasbon { background: #f0fdf4; color: #796cf2; border: 1px solid #dcfce7; }
 
         .btn-revoke-action {
             background: #fff1f2; color: #e11d48; border: 1px solid #fecdd3;
@@ -1310,8 +1890,36 @@ const UserDashboard: React.FC = () => {
             transition: all 0.2s;
         }
         .btn-revoke-action:hover { background: #e11d48; color: white; transform: scale(1.05); }
+
+        /* Reminder Matrix Styles */
+        .reminder-matrix-container { padding: 20px; }
+        .reminder-table-wrapper { background: white; border-radius: 12px; border: 1px solid #e2e8f0; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+        .reminder-table-premium { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+        .reminder-table-premium th { background: #f8fafc; border: 1px solid #e2e8f0; padding: 12px 8px; font-weight: 800; color: #475569; }
+        .reminder-table-premium td { border: 1px solid #f1f5f9; padding: 12px 10px; color: #1e293b; font-weight: 600; }
+        .reminder-table-premium .main-header { background: #f1f5f9; }
+        .reminder-table-premium .sub-header th { font-size: 0.75rem; background: #f8fafc; color: #64748b; }
+        .text-center { text-align: center; }
+        .check-cell { text-align: center; color: #796cf2; font-size: 1.1rem; font-weight: 900; background: #ecfdf5; }
+        .dash-cell { text-align: center; color: #cbd5e1; }
+        .dept-cell { background: #f8fafc; font-weight: 800; color: #1e293b; width: 140px; }
+        .ack-cell { color: #2563eb; font-weight: 700; background: #eff6ff; }
+        .divider-row td { padding: 4px; background: #f1f5f9; }
+
+        /* Global Modal Styles */
+        .modal-overlay-global {
+            position: fixed; inset: 0; background: rgba(15, 23, 42, 0.4);
+            backdrop-filter: blur(8px); display: flex; align-items: center;
+            justify-content: center; z-index: 10000; padding: 20px;
+        }
+        .animate-pop-up { animation: popUp 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+        @keyframes popUp {
+            from { opacity: 0; transform: translateY(20px) scale(0.95); }
+            to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+
       `}</style>
-        </div>
+        </div >
     );
 };
 

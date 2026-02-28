@@ -1,8 +1,8 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
 
 :root {
-  --primary: #10b981;
-  --primary-hover: #059669;
+  --primary: #796cf2;
+  --primary-hover: #6052db;
   --bg-main: #f3f4f6;
   --bg-card: #ffffff;
   --text-main: #1f2937;
@@ -24,16 +24,11 @@ body {
   background-color: var(--bg-main);
   color: var(--text-main);
   min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
 }
 
 #root {
   width: 100%;
-  display: flex;
-  justify-content: center;
-  align-items: center;
+  min-height: 100vh;
 }
 
 button {

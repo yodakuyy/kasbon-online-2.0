@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, type ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
 
 export type UserRole = 'USER' | 'APPROVER' | 'FINANCE' | 'ADMIN';
 
@@ -37,6 +37,7 @@ export interface KasbonRequest {
     amount: number;
     date: string;
     dateNeeded: string;
+    bankName: string;
     bankAccount: string;
     status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'DISBURSED' | 'SETTLED' | 'REVOKED';
     isOverdue: boolean;
@@ -108,51 +109,58 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [role, setRoleState] = useState<UserRole>('USER');
-    const [requests, setRequests] = useState<KasbonRequest[]>([
-        {
-            id: '00275',
-            requestor: 'Fahmi Ilmawan',
-            department: 'IT Operation',
-            amount: 2000000,
-            date: '2026-02-26',
-            dateNeeded: '2026-03-01',
-            bankAccount: 'BCA - 1234567890',
-            status: 'PENDING',
-            isOverdue: false,
-            slot: 1,
-            purpose: 'Beli Server Part',
-            items: [
-                { id: '1', description: 'Sparepart urgent AC', amount: 1500000 },
-                { id: '2', description: 'Transport teknisi', amount: 500000 },
-            ],
-            type: 'REGULAR',
-            approvalPath: [
-                { approverName: 'Raymond Tjahja', role: 'Manager IT', status: 'PENDING', stepOrder: 1 },
-                { approverName: 'Senior Manager IT', role: 'Sr Manager', status: 'PENDING', stepOrder: 2 },
-                { approverName: 'Finance', role: 'Finance', status: 'PENDING', stepOrder: 3 },
-            ],
-            currentStepIndex: 0
-        },
-        {
-            id: '00261',
-            requestor: 'Fahmi Ilmawan',
-            department: 'IT Operation',
-            amount: 1500000,
-            date: '2026-02-15',
-            dateNeeded: '2026-02-18',
-            bankAccount: 'BCA - 1234567890',
-            status: 'APPROVED',
-            isOverdue: false,
-            slot: 2,
-            purpose: 'Modem Router',
-            items: [{ id: '1', description: 'Modem Router', amount: 1500000 }],
-            approvalPath: [
-                { approverName: 'Raymond Tjahja', role: 'Manager IT', status: 'APPROVED', stepOrder: 1 }
-            ],
-            type: 'REGULAR',
-            currentStepIndex: 1
+    const [requests, setRequests] = useState<KasbonRequest[]>([]);
+
+    const fetchKasbons = async () => {
+        try {
+            const res = await fetch('http://localhost:3001/api/kasbons');
+            const result = await res.json();
+            if (result.status === 'success') {
+                const mappedKasbons: KasbonRequest[] = result.data.map((dbKasbon: any) => ({
+                    id: dbKasbon.id,
+                    requestor: dbKasbon.requestor_name,
+                    department: dbKasbon.department_name,
+                    amount: dbKasbon.amount,
+                    date: dbKasbon.request_date.split('T')[0],
+                    dateNeeded: dbKasbon.date_needed,
+                    bankName: dbKasbon.bank_name || 'BCA',
+                    bankAccount: dbKasbon.bank_account,
+                    status: dbKasbon.status,
+                    isOverdue: dbKasbon.is_overdue,
+                    slot: dbKasbon.slot_used,
+                    purpose: dbKasbon.purpose,
+                    items: dbKasbon.items
+                        ? dbKasbon.items.filter((i: any) => !i.is_realization_item).map((i: any) => ({ id: i.id, description: i.description, amount: i.amount }))
+                        : [],
+                    realizationItems: dbKasbon.items
+                        ? dbKasbon.items.filter((i: any) => i.is_realization_item).map((i: any) => ({ id: i.id, description: i.description, amount: i.amount }))
+                        : undefined,
+                    type: dbKasbon.type,
+                    approvalPath: dbKasbon.approvals
+                        ? dbKasbon.approvals.sort((a: any, b: any) => a.step_order - b.step_order).map((a: any) => ({
+                            approverName: a.approver_name,
+                            role: a.role_description,
+                            status: a.status,
+                            stepOrder: a.step_order,
+                            approvedAt: a.approved_at
+                        }))
+                        : [],
+                    currentStepIndex: dbKasbon.current_step_index,
+                    realizationTotal: dbKasbon.realization_total,
+                    isRealized: dbKasbon.is_realized,
+                    slotJustification: dbKasbon.slot_justification
+                }));
+                setRequests(mappedKasbons);
+            }
+        } catch (error) {
+            console.error('Failed to fetch kasbons:', error);
         }
-    ]);
+    };
+
+    useEffect(() => {
+        fetchKasbons();
+    }, []);
+
 
     const [slotRequests, setSlotRequests] = useState<SlotRequest[]>([
         {
@@ -274,12 +282,27 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
     };
 
+    const userStr = typeof window !== 'undefined' ? localStorage.getItem('kasbon_user') : null;
+    const loggedInUser = userStr ? JSON.parse(userStr) : null;
+
+    const extractDeptName = (userStr: any) => {
+        if (!userStr) return 'IT Operation';
+        if (userStr.cost_center) {
+            const parts = userStr.cost_center.trim().split(/\s+/);
+            if (parts.length > 1) {
+                return parts.slice(1).join(' '); // removes the 'CB018-CC028' prefix
+            }
+            return userStr.cost_center; // if no space, just return the whole thing
+        }
+        return userStr.department || 'Unknown Dept';
+    };
+
     const currentUser = {
-        name: 'Fahmi Ilmawan',
+        name: loggedInUser?.name || 'Fahmi Ilmawan',
         role,
-        dept: 'IT Operation',
-        atasanLangsung: 'Raymond Tjahja',
-        isAtasanLangsungActive: false // MOCK: Atasan Resigned for showing Warning in UI
+        dept: extractDeptName(loggedInUser),
+        atasanLangsung: loggedInUser?.direct_supervisor || 'Raymond Tjahja',
+        isAtasanLangsungActive: (!loggedInUser || loggedInUser?.direct_supervisor) ? true : false
     };
 
     const getDynamicApprovalPath = (amount: number, isOverSlotRequest?: boolean): ApprovalStep[] => {
@@ -340,23 +363,51 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         outstanding: requests.filter(r => r.status !== 'SETTLED').reduce((acc, r) => acc + r.amount, 0)
     };
 
-    const addRequest = (newReq: Omit<KasbonRequest, 'id' | 'status' | 'isOverdue' | 'slot' | 'approvalPath' | 'currentStepIndex' | 'type'> & { type?: 'REGULAR' | 'OVER_SLOT' }) => {
-        const activeRequests = requests.filter(r => r.requestor === newReq.requestor && r.status !== 'SETTLED');
-        const nextSlot = activeRequests.length + 1;
-        const dept = deptSettings.find(d => d.deptName === newReq.department);
-        const isOverLimit = dept ? nextSlot > dept.maxSlots : nextSlot > 2;
+    const addRequest = async (newReq: Omit<KasbonRequest, 'id' | 'status' | 'isOverdue' | 'slot' | 'approvalPath' | 'currentStepIndex' | 'type'> & { type?: 'REGULAR' | 'OVER_SLOT' }) => {
+        const userStr = localStorage.getItem('kasbon_user');
+        const loggedUser = userStr ? JSON.parse(userStr) : null;
 
-        const fullReq: KasbonRequest = {
-            ...newReq,
-            id: `00${275 + requests.length + 1}`,
-            status: 'PENDING',
-            isOverdue: false,
-            slot: nextSlot,
+        const emp_no = loggedUser?.emp_no || 'NIP-UNKNOWN';
+        const name = loggedUser?.name || currentUser.name;
+        const costCenter = loggedUser?.cost_center || 'UNKNOWN-CC';
+
+        const activeRequests = requests.filter(r => r.requestor === name && r.status !== 'SETTLED');
+        const nextSlot = activeRequests.length + 1;
+
+        // This relies on the live fetched data in UserDashboard ideally, but for now fallback to 2
+        const isOverLimit = nextSlot > 2;
+
+        const payload = {
+            requestor_emp_no: emp_no,
+            requestor_name: name,
+            department_name: newReq.department,
+            cost_center_code: costCenter,
+            amount: newReq.amount,
+            date_needed: newReq.dateNeeded,
+            bank_name: newReq.bankName,
+            bank_account: newReq.bankAccount,
+            purpose: newReq.purpose,
+            items: newReq.items,
+            slot_used: nextSlot,
             type: newReq.type || (isOverLimit ? 'OVER_SLOT' : 'REGULAR'),
-            approvalPath: getDynamicApprovalPath(newReq.amount, isOverLimit),
-            currentStepIndex: 0,
+            approvalPath: getDynamicApprovalPath(newReq.amount, isOverLimit)
         };
-        setRequests([...requests, fullReq]);
+
+        try {
+            const res = await fetch('http://localhost:3001/api/kasbons', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (data.status === 'success') {
+                fetchKasbons(); // Refresh data after save
+            } else {
+                console.error('Save failed:', data.message);
+            }
+        } catch (error) {
+            console.error('Error saving kasbon:', error);
+        }
     };
 
     return (

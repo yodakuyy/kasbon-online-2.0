@@ -32,7 +32,7 @@ const ApprovalScreen: React.FC<ApprovalScreenProps> = ({ request, onBack, onAppr
                 <div className="card-top-info">
                     <div className="user-profile-info">
                         <div className="user-avatar-lg">
-                            <img src="https://ui-avatars.com/api/?name=Fahmi+Ilmawan&background=10b981&color=fff" alt="avatar" />
+                            <img src="https://ui-avatars.com/api/?name=Fahmi+Ilmawan&background=796cf2&color=fff" alt="avatar" />
                         </div>
                         <div className="user-meta-info">
                             <p className="meta-label">Pemohon</p>
@@ -148,10 +148,10 @@ const ApprovalScreen: React.FC<ApprovalScreenProps> = ({ request, onBack, onAppr
           flex: 1; display: flex; align-items: center; justify-content: center; gap: 10px;
           padding: 16px; border-radius: 12px; border: none; background: var(--primary);
           color: white; font-weight: 700; cursor: pointer; transition: all 0.2s;
-          box-shadow: 0 4px 12px rgba(16, 185, 129, 0.2);
+          box-shadow: 0 4px 12px rgba(121, 108, 242, 0.2);
         }
-        .btn-approve-modern:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(16, 185, 129, 0.3); }
-        .btn-approve-modern:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(16, 185, 129, 0.3); }
+        .btn-approve-modern:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(121, 108, 242, 0.3); }
+        .btn-approve-modern:hover { transform: translateY(-1px); box-shadow: 0 6px 20px rgba(121, 108, 242, 0.3); }
 
         .over-slot-warning-banner {
             background: #fff1f2; border: 1px solid #fecaca; border-radius: 12px;

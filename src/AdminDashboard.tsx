@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   LayoutDashboard,
   FileText,
@@ -16,19 +16,37 @@ import {
   Download,
   Wallet,
   ArrowUpRight,
-  ChevronRight
+  ChevronRight,
+  ShieldAlert
 } from 'lucide-react';
+import axios from 'axios';
 
 const AdminDashboard: React.FC = () => {
   const [activeTab, setActiveTab] = useState('Overview');
   const [isSidebarOpen] = useState(true);
+  const [modenaUsers, setModenaUsers] = useState<any[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+
+  React.useEffect(() => {
+    if (activeTab === 'User Management') {
+      setLoadingUsers(true);
+      axios.get('http://localhost:3001/api/users/me')
+        .then(res => {
+          if (res.data && res.data.data) {
+            setModenaUsers(res.data.data);
+          }
+        })
+        .catch(err => console.error('Error fetching Modena users:', err))
+        .finally(() => setLoadingUsers(false));
+    }
+  }, [activeTab]);
 
   // Stats Data
   const stats = [
     { title: 'Total Kasbon', value: 'Rp 450.250.000', icon: <Wallet size={20} />, color: '#2563eb', change: '+12.5%' },
     { title: 'Outstanding', value: 'Rp 125.400.000', icon: <Clock size={20} />, color: '#f59e0b', change: '8 Requests' },
     { title: 'Overdue Settlement', value: '3 Karyawan', icon: <AlertCircle size={20} />, color: '#ef4444', change: 'Action Required' },
-    { title: 'Disbursed (This Week)', value: 'Rp 45.000.000', icon: <CheckCircle2 size={20} />, color: '#10b981', change: 'H-2 Disbursement' },
+    { title: 'Disbursed (This Week)', value: 'Rp 45.000.000', icon: <CheckCircle2 size={20} />, color: '#796cf2', change: 'H-2 Disbursement' },
   ];
 
   // Recent Requests Data (Based on SOP flow)
@@ -44,7 +62,7 @@ const AdminDashboard: React.FC = () => {
     switch (status) {
       case 'Pending HOD': return '#f59e0b';
       case 'Finance Review': return '#3b82f6';
-      case 'Approved': return '#10b981';
+      case 'Approved': return '#796cf2';
       case 'Disbursed': return '#6366f1';
       default: return '#64748b';
     }
@@ -80,7 +98,7 @@ const AdminDashboard: React.FC = () => {
 
           <div className="nav-group">
             <span className="group-label">Administration</span>
-            <button className="nav-item">
+            <button className={`nav-item ${activeTab === 'User Management' ? 'active' : ''}`} onClick={() => setActiveTab('User Management')}>
               <Users size={20} />
               <span>User Management</span>
             </button>
@@ -140,75 +158,143 @@ const AdminDashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Stats Grid */}
-          <div className="stats-grid">
-            {stats.map((stat, index) => (
-              <div key={index} className="stat-card">
-                <div className="stat-header">
-                  <div className="stat-icon" style={{ backgroundColor: `${stat.color}15`, color: stat.color }}>
-                    {stat.icon}
-                  </div>
-                  <span className="stat-change">{stat.change}</span>
-                </div>
-                <div className="stat-body">
-                  <span className="stat-title">{stat.title}</span>
-                  <p className="stat-value">{stat.value}</p>
-                </div>
-              </div>
-            ))}
-          </div>
+          {activeTab === 'Overview' && (
+            <>
 
-          {/* Tables Section */}
-          <div className="content-grid">
-            <div className="table-card">
-              <div className="card-header">
-                <h3>Recent Kasbon Requests</h3>
-                <div className="header-filters">
-                  <button className="filter-btn"><Filter size={16} /> Filter</button>
-                  <button className="view-all">View All <ChevronRight size={16} /></button>
+              {/* Stats Grid */}
+              <div className="stats-grid">
+                {stats.map((stat, index) => (
+                  <div key={index} className="stat-card">
+                    <div className="stat-header">
+                      <div className="stat-icon" style={{ backgroundColor: `${stat.color}15`, color: stat.color }}>
+                        {stat.icon}
+                      </div>
+                      <span className="stat-change">{stat.change}</span>
+                    </div>
+                    <div className="stat-body">
+                      <span className="stat-title">{stat.title}</span>
+                      <p className="stat-value">{stat.value}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Tables Section */}
+              <div className="content-grid">
+                <div className="table-card">
+                  <div className="card-header">
+                    <h3>Recent Kasbon Requests</h3>
+                    <div className="header-filters">
+                      <button className="filter-btn"><Filter size={16} /> Filter</button>
+                      <button className="view-all">View All <ChevronRight size={16} /></button>
+                    </div>
+                  </div>
+                  <div className="table-wrapper">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Request ID</th>
+                          <th>Requestor</th>
+                          <th>Department</th>
+                          <th>Amount</th>
+                          <th>Status</th>
+                          <th>Action</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {recentRequests.map((req) => (
+                          <tr key={req.id}>
+                            <td><span className="id-badge">{req.id}</span></td>
+                            <td>
+                              <div className="table-user">
+                                <div className="user-avatar">{req.user.charAt(0)}</div>
+                                <span>{req.user}</span>
+                              </div>
+                            </td>
+                            <td>{req.dept}</td>
+                            <td className="amount">{req.amount}</td>
+                            <td>
+                              <div className="status-container">
+                                <span className="status-dot" style={{ backgroundColor: getStatusColor(req.status, req.overdue) }}></span>
+                                <span className="status-text">{req.status}</span>
+                                {req.overdue && <span className="overdue-tag">Overdue</span>}
+                              </div>
+                            </td>
+                            <td>
+                              <button className="action-btn"><MoreVertical size={16} /></button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </div>
-              <div className="table-wrapper">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Request ID</th>
-                      <th>Requestor</th>
-                      <th>Department</th>
-                      <th>Amount</th>
-                      <th>Status</th>
-                      <th>Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {recentRequests.map((req) => (
-                      <tr key={req.id}>
-                        <td><span className="id-badge">{req.id}</span></td>
-                        <td>
-                          <div className="table-user">
-                            <div className="user-avatar">{req.user.charAt(0)}</div>
-                            <span>{req.user}</span>
-                          </div>
-                        </td>
-                        <td>{req.dept}</td>
-                        <td className="amount">{req.amount}</td>
-                        <td>
-                          <div className="status-container">
-                            <span className="status-dot" style={{ backgroundColor: getStatusColor(req.status, req.overdue) }}></span>
-                            <span className="status-text">{req.status}</span>
-                            {req.overdue && <span className="overdue-tag">Overdue</span>}
-                          </div>
-                        </td>
-                        <td>
-                          <button className="action-btn"><MoreVertical size={16} /></button>
-                        </td>
+            </>
+          )}
+
+          {activeTab === 'User Management' && (
+            <div className="content-grid">
+              <div className="table-card">
+                <div className="card-header">
+                  <div>
+                    <h3>Identity & Configuration</h3>
+                    <p style={{ color: '#64748b', fontSize: '0.875rem', marginTop: '4px' }}>
+                      Data tersinkronisasi langsung dengan <strong>Modena Identity DB (READ-ONLY)</strong>.
+                    </p>
+                  </div>
+                  <div className="header-filters">
+                    <button className="filter-btn"><Search size={16} /> Cari User Mode</button>
+                  </div>
+                </div>
+                <div className="table-wrapper">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>NIP (Employee No)</th>
+                        <th>Full Name</th>
+                        <th>User Status</th>
+                        <th>Kasbon Access Role</th>
+                        <th>Action</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {loadingUsers ? (
+                        <tr><td colSpan={5} style={{ textAlign: 'center', padding: '40px' }}>Loading Modena Users data...</td></tr>
+                      ) : (
+                        modenaUsers.map((user, idx) => (
+                          <tr key={idx}>
+                            <td><span className="id-badge" style={{ background: '#f0fdf4', color: '#16a34a' }}>{user.emp_no || 'N/A'}</span></td>
+                            <td>
+                              <div className="table-user">
+                                <div className="user-avatar" style={{ background: '#796cf215', color: '#796cf2' }}>
+                                  {(user.employe_name || user.first_name || 'U').charAt(0).toUpperCase()}
+                                </div>
+                                <span style={{ fontWeight: 600 }}>{user.employe_name || user.first_name}</span>
+                              </div>
+                            </td>
+                            <td>
+                              <span className="overdue-tag" style={{ background: user.employee_status === 'Active' ? '#dcfce7' : '#f1f5f9', color: user.employee_status === 'Active' ? '#16a34a' : '#64748b', textTransform: 'capitalize' }}>
+                                {user.employee_status || 'Unknown'}
+                              </span>
+                            </td>
+                            <td>
+                              <span className="status-text" style={{ color: '#64748b' }}>Default (Employee)</span>
+                            </td>
+                            <td>
+                              <button className="btn-secondary" style={{ padding: '6px 12px', fontSize: '0.75rem' }}>
+                                <Settings size={14} /> Assign Role
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
-          </div>
+          )}
         </div>
       </main>
 
@@ -503,7 +589,7 @@ const AdminDashboard: React.FC = () => {
         .stat-change {
           font-size: 0.75rem;
           font-weight: 600;
-          color: #10b981;
+          color: #796cf2;
           background: #ecfdf5;
           padding: 4px 8px;
           border-radius: 20px;

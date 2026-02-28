@@ -61,7 +61,7 @@ const RealisasiScreen: React.FC<RealisasiScreenProps> = ({ request, onBack }) =>
                 title: 'Direset!',
                 text: 'Data realisasi telah dikosongkan.',
                 icon: 'success',
-                confirmButtonColor: '#10b981'
+                confirmButtonColor: '#796cf2'
             });
         }
     };
@@ -86,7 +86,7 @@ const RealisasiScreen: React.FC<RealisasiScreenProps> = ({ request, onBack }) =>
             title: 'Berhasil!',
             text: `Data Realisasi Berhasil Disimpan & Dicetak untuk ${selectedPT}`,
             icon: 'success',
-            confirmButtonColor: '#10b981'
+            confirmButtonColor: '#796cf2'
         }).then(() => {
             onBack();
         });
@@ -147,7 +147,7 @@ const RealisasiScreen: React.FC<RealisasiScreenProps> = ({ request, onBack }) =>
                         </div>
                         <div className="s-row">
                             <div className="s-label">Bank / No Rekening</div>
-                            <div className="s-value">: {request.bankAccount}</div>
+                            <div className="s-value">: {request.bankName} - {request.bankAccount}</div>
                         </div>
                     </div>
                 </div>
@@ -256,10 +256,10 @@ const RealisasiScreen: React.FC<RealisasiScreenProps> = ({ request, onBack }) =>
                 .btn-classic-reset:hover { background: #dc2626; }
                 .btn-classic-save:hover { background: #15803d; }
                 .pt-header-select { flex: 1; padding: 10px; border-radius: 4px; border: 2px solid #cbd5e1; font-weight: 700; color: #1e293b; outline: none; }
-                .pt-header-select:focus { border-color: #10b981; }
+                .pt-header-select:focus { border-color: #796cf2; }
 
                 .spreadsheet-card { background: white; border: 1px solid #e2e8f0; border-radius: 4px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-                .spreadsheet-card.highlight { border-top: 3px solid #10b981; }
+                .spreadsheet-card.highlight { border-top: 3px solid #796cf2; }
                 .spreadsheet-header { background: #f1f5f9; padding: 12px 16px; font-size: 0.85rem; font-weight: 800; color: #475569; border-bottom: 1px solid #e2e8f0; }
                 
                 .spreadsheet-grid { padding: 16px; display: flex; flex-direction: column; gap: 8px; }
@@ -273,7 +273,7 @@ const RealisasiScreen: React.FC<RealisasiScreenProps> = ({ request, onBack }) =>
                 
                 .spreadsheet-table.editable td { padding: 4px 16px; }
                 .s-input { width: 100%; border: 1px solid transparent; padding: 10px; border-radius: 4px; font-size: 0.9rem; font-weight: 600; background: #f8fafc; }
-                .s-input:focus { border-color: #10b981; background: white; outline: none; }
+                .s-input:focus { border-color: #796cf2; background: white; outline: none; }
                 .text-right { text-align: right; }
                 .btn-remove-s { background: none; border: none; color: #cbd5e1; font-size: 1.2rem; cursor: pointer; padding: 4px; }
                 .btn-remove-s:hover { color: #ef4444; }
@@ -286,7 +286,7 @@ const RealisasiScreen: React.FC<RealisasiScreenProps> = ({ request, onBack }) =>
                 .summary-row span { color: #64748b; font-weight: 600; }
                 .summary-row strong { color: #1e293b; font-weight: 800; font-size: 1.1rem; }
                 .summary-row.over strong { color: #ef4444; }
-                .summary-row.under strong { color: #10b981; }
+                .summary-row.under strong { color: #796cf2; }
             `}</style>
         </div>
     );

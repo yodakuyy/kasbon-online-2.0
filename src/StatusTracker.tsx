@@ -110,11 +110,11 @@ const StatusTracker: React.FC<StatusTrackerProps> = ({ request, onBack }) => {
           transition: all 0.3s;
         }
 
-        .timeline-step.finished .step-point { background: #dcfce7; color: #10b981; }
+        .timeline-step.finished .step-point { background: #dcfce7; color: #796cf2; }
         .timeline-step.finished span { color: #111827; }
         
-        .timeline-step.active .step-point { background: #10b981; color: white; box-shadow: 0 4px 10px rgba(16, 185, 129, 0.4); }
-        .timeline-step.active span { color: #10b981; }
+        .timeline-step.active .step-point { background: #796cf2; color: white; box-shadow: 0 4px 10px rgba(121, 108, 242, 0.4); }
+        .timeline-step.active span { color: #796cf2; }
         
         .step-countdown { 
           position: absolute; top: -30px; background: #fffbeb; color: #b45309; 
@@ -123,7 +123,7 @@ const StatusTracker: React.FC<StatusTrackerProps> = ({ request, onBack }) => {
         }
 
         .timeline-connector { flex: 1; height: 3px; background: #f3f4f6; margin: 0 -20px; position: relative; top: -14px; }
-        .timeline-connector.finished { background: #10b981; }
+        .timeline-connector.finished { background: #796cf2; }
         .timeline-connector.active { background: #f1f5f9; border: 1px dashed #cbd5e1; }
 
         .detail-kasbon-card { background: white; border-radius: 20px; padding: 32px; border: 1px solid #f3f4f6; }
@@ -136,7 +136,7 @@ const StatusTracker: React.FC<StatusTrackerProps> = ({ request, onBack }) => {
 
         .detail-total-row { display: flex; justify-content: space-between; align-items: center; margin-top: 24px; }
         .detail-total-row span { font-weight: 800; color: #1e293b; font-size: 1.1rem; }
-        .detail-total-row strong { font-size: 1.8rem; font-weight: 800; color: #10b981; }
+        .detail-total-row strong { font-size: 1.8rem; font-weight: 800; color: #796cf2; }
 
         .approval-history-modern { background: white; border-radius: 20px; padding: 32px; border: 1px solid #f3f4f6; }
         .approval-history-modern h3 { font-size: 0.8rem; font-weight: 800; color: #94a3b8; text-transform: uppercase; margin-bottom: 24px; letter-spacing: 0.05em; }

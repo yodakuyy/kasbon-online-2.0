@@ -6,11 +6,12 @@ import {
     Upload,
     AlertTriangle,
     Calendar,
-    CreditCard,
     Plus,
     Trash2,
     CheckCircle2,
-    UserCheck
+    UserCheck,
+    Hash,
+    Building2
 } from 'lucide-react';
 import { useApp, type KasbonItem } from './context/AppContext';
 
@@ -19,11 +20,12 @@ interface NewRequestModalProps {
 }
 
 const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
-    const { addRequest, currentUser, requests, getDynamicApprovalPath, deptSettings } = useApp();
+    const { addRequest, currentUser, requests, getDynamicApprovalPath } = useApp();
     const [step, setStep] = useState(1);
     const [formData, setFormData] = useState({
         dateNeeded: '',
-        bankAccount: 'BCA - 1234567890',
+        bankName: '',
+        bankAccount: '',
         purpose: '',
         slotJustification: '',
     });
@@ -35,8 +37,7 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
 
     // Department Slot Logic
     const deptActiveRequests = requests.filter(r => r.department === currentUser.dept && !['SETTLED', 'REVOKED', 'REJECTED'].includes(r.status));
-    const deptSetting = deptSettings.find(ds => ds.deptName === currentUser.dept) || deptSettings[0];
-    const isSlotFull = deptActiveRequests.length >= deptSetting.maxSlots;
+    const isSlotFull = deptActiveRequests.length >= 2; // Default 2 safely as per Cost Center standard
 
     const activeRequests = requests.filter(r => r.requestor === currentUser.name && !['SETTLED', 'REVOKED', 'REJECTED'].includes(r.status));
     const nextSlot = activeRequests.length + 1;
@@ -75,6 +76,7 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
             purpose: items[0]?.description || 'Multiple Items',
             date: new Date().toISOString().split('T')[0],
             dateNeeded: formData.dateNeeded,
+            bankName: formData.bankName,
             bankAccount: formData.bankAccount,
             items: items.map((it, idx) => ({ ...it, id: idx.toString() })),
             type: isSlotFull ? 'OVER_SLOT' : 'REGULAR',
@@ -179,17 +181,32 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
                                             />
                                         </div>
                                     </div>
-                                    <div className="form-group-modern">
-                                        <label>Rekening Tujuan</label>
-                                        <div className="input-with-icon">
-                                            <CreditCard size={18} color="#6b7280" />
-                                            <select
-                                                value={formData.bankAccount}
-                                                onChange={e => setFormData({ ...formData, bankAccount: e.target.value })}
-                                            >
-                                                <option>BCA - 1234567890</option>
-                                                <option>Mandiri - 9876543210</option>
-                                            </select>
+                                    <div className="form-row-modern">
+                                        <div className="form-group-modern">
+                                            <label>Nama Bank</label>
+                                            <div className="input-with-icon">
+                                                <Building2 size={18} color="#6b7280" />
+                                                <input
+                                                    type="text"
+                                                    placeholder="Contoh: BCA / Mandiri"
+                                                    value={formData.bankName}
+                                                    onChange={e => setFormData({ ...formData, bankName: e.target.value })}
+                                                    required
+                                                />
+                                            </div>
+                                        </div>
+                                        <div className="form-group-modern">
+                                            <label>Nomor Rekening</label>
+                                            <div className="input-with-icon">
+                                                <Hash size={18} color="#6b7280" />
+                                                <input
+                                                    type="text"
+                                                    placeholder="Isikan No Rekening"
+                                                    value={formData.bankAccount}
+                                                    onChange={e => setFormData({ ...formData, bankAccount: e.target.value })}
+                                                    required
+                                                />
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -266,13 +283,13 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
                                     <div className="upload-box-modern">
                                         {attachments.length > 0 ? (
                                             <>
-                                                <CheckCircle2 size={40} color="#10b981" />
+                                                <CheckCircle2 size={40} color="#796cf2" />
                                                 <h4>{attachments.length} File Terpilih</h4>
                                                 <p>Klik lagi untuk menambah file lain</p>
                                             </>
                                         ) : (
                                             <>
-                                                <Upload size={40} color="#10b981" />
+                                                <Upload size={40} color="#796cf2" />
                                                 <h4>Unggah Dokumen Pendukung</h4>
                                                 <p>Seret & taruh file di sini, atau klik untuk memilih</p>
                                             </>
@@ -377,7 +394,7 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
         .modal-header-modern { padding: 32px 40px; border-bottom: 1px solid #f1f5f9; display: flex; align-items: center; justify-content: space-between; }
         .stepper { display: flex; align-items: center; gap: 12px; }
         .step-item { display: flex; align-items: center; gap: 8px; color: #94a3b8; font-size: 0.9rem; font-weight: 600; }
-        .step-item.active { color: #10b981; }
+        .step-item.active { color: #796cf2; }
         .step-circle { 
           width: 24px; height: 24px; border-radius: 50%; border: 2px solid currentColor;
           display: flex; align-items: center; justify-content: center; font-size: 0.75rem;
@@ -396,7 +413,7 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
           width: 100%; padding: 12px 16px; border-radius: 12px; border: 1px solid #e2e8f0;
           font-size: 1rem; color: #1e293b; transition: all 0.2s;
         }
-        .form-group-modern input:focus { border-color: #10b981; box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.1); outline: none; }
+        .form-group-modern input:focus { border-color: #796cf2; box-shadow: 0 0 0 4px rgba(121, 108, 242, 0.1); outline: none; }
         .form-group-modern input:disabled { background: #f8fafc; color: #94a3b8; cursor: not-allowed; }
 
         .input-with-icon { position: relative; display: flex; align-items: center; }
@@ -423,14 +440,14 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
           display: flex; align-items: center; justify-content: center; gap: 8px;
           color: #64748b; font-weight: 700; cursor: pointer; transition: all 0.2s;
         }
-        .btn-add-item-modern:hover { border-color: #10b981; color: #10b981; background: #f0fdf4; }
+        .btn-add-item-modern:hover { border-color: #796cf2; color: #796cf2; background: #f0fdf4; }
 
         .total-bar-modern {
           background: #0f172a; border-radius: 16px; padding: 20px 24px; margin-top: 12px;
           display: flex; justify-content: space-between; align-items: center; color: white;
         }
         .total-bar-modern span { font-size: 0.9rem; font-weight: 600; color: #94a3b8; }
-        .total-bar-modern strong { font-size: 1.5rem; font-weight: 800; color: #10b981; }
+        .total-bar-modern strong { font-size: 1.5rem; font-weight: 800; color: #796cf2; }
 
         .live-approval-preview { margin-top: 32px; background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 16px; padding: 20px; }
         .preview-label { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
@@ -438,7 +455,7 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
         .preview-step { display: grid; grid-template-columns: 120px 1fr; font-size: 0.85rem; align-items: center; padding-bottom: 8px; border-bottom: 1px solid #f1f5f9; }
         .preview-step:last-child { border-bottom: none; }
         .step-role { font-weight: 700; color: #475569; }
-        .step-name { color: #10b981; font-weight: 600; text-align: right; }
+        .step-name { color: #796cf2; font-weight: 600; text-align: right; }
 
         .upload-modern-area { 
           border: 2px dashed #e5e7eb; border-radius: 20px; padding: 60px; 
@@ -476,7 +493,7 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
           width: 32px; height: 32px; border-radius: 50%; background: #f1f5f9; color: #64748b;
           display: flex; align-items: center; justify-content: center; font-size: 0.85rem; font-weight: 800;
         }
-        .t-item.active .t-dot { background: #dcfce7; color: #10b981; }
+        .t-item.active .t-dot { background: #dcfce7; color: #796cf2; }
         .t-info { display: flex; flex-direction: column; }
         .t-role { font-size: 0.75rem; font-weight: 800; color: #94a3b8; text-transform: uppercase; }
         .t-name { font-size: 0.95rem; font-weight: 700; color: #1e293b; }
@@ -493,7 +510,7 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
 
         .form-footer-modern { padding: 32px 40px; border-top: 1px solid #f1f5f9; display: flex; align-items: center; }
         .btn-back-modern { background: transparent; border: 1px solid #e2e8f0; color: #64748b; font-weight: 700; padding: 12px 24px; border-radius: 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
-        .btn-next-modern { background: #10b981; color: white; border: none; font-weight: 800; padding: 12px 32px; border-radius: 12px; cursor: pointer; display: flex; align-items: center; gap: 10px; box-shadow: 0 10px 15px -3px rgba(16, 185, 129, 0.2); }
+        .btn-next-modern { background: #796cf2; color: white; border: none; font-weight: 800; padding: 12px 32px; border-radius: 12px; cursor: pointer; display: flex; align-items: center; gap: 10px; box-shadow: 0 10px 15px -3px rgba(121, 108, 242, 0.2); }
         .btn-submit-modern { background: #0f172a; color: white; border: none; font-weight: 800; padding: 12px 32px; border-radius: 12px; cursor: pointer; box-shadow: 0 10px 15px -3px rgba(15, 23, 42, 0.2); width: 100%; max-width: 250px; }
       `}</style>
         </div>
