@@ -556,10 +556,18 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
                 .preview-label { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
                 .preview-chain { display: flex; flex-direction: column; gap: 10px; }
                 .preview-section-label { font-size: 0.7rem; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
-                .preview-step { display: grid; grid-template-columns: 140px 1fr; font-size: 0.85rem; align-items: center; padding-bottom: 8px; border-bottom: 1px solid #f1f5f9; }
+                .preview-step { 
+                  display: grid; 
+                  grid-template-columns: 220px 1fr; 
+                  font-size: 0.85rem; 
+                  align-items: center; 
+                  padding: 8px 0; 
+                  border-bottom: 1px solid #f1f5f9; 
+                }
                 .preview-step:last-child { border-bottom: none; }
-                .step-role { font-weight: 700; color: #475569; }
-                .step-name { color: #796cf2; font-weight: 600; text-align: right; }
+                .step-role { font-weight: 700; color: #475569; position: relative; padding-left: 12px; }
+                .step-role::before { content: '•'; position: absolute; left: 0; color: #796cf2; }
+                .step-name { color: #796cf2; font-weight: 600; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
                 .preview-divider { display: flex; align-items: center; gap: 12px; margin: 12px 0 8px; }
                 .divider-line { flex: 1; height: 1px; background: repeating-linear-gradient(90deg, #cbd5e1 0px, #cbd5e1 4px, transparent 4px, transparent 8px); }
                 .divider-text { font-size: 0.65rem; font-weight: 800; color: #796cf2; text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap; }

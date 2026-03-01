@@ -687,6 +687,80 @@ app.put('/api/kasbons/:id/status', async (req, res) => {
     }
 });
 
+// ============ ACTIVITY LOGS & SETTINGS ============
+
+// GET all activity logs
+app.get('/api/activity-logs', async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('activity_logs')
+            .select('*')
+            .order('timestamp', { ascending: false })
+            .limit(100);
+
+        if (error) throw error;
+        res.json({ status: 'success', data });
+    } catch (err) {
+        console.error('Fetch Logs Error:', err.message);
+        res.status(500).json({ status: 'error', message: err.message });
+    }
+});
+
+// POST new activity log
+app.post('/api/activity-logs', async (req, res) => {
+    try {
+        const { user, action, details, type } = req.body;
+        const { data, error } = await supabase
+            .from('activity_logs')
+            .insert([{ user, action, details, type }])
+            .select()
+            .single();
+
+        if (error) throw error;
+        res.json({ status: 'success', data });
+    } catch (err) {
+        console.error('Post Log Error:', err.message);
+        res.status(500).json({ status: 'error', message: err.message });
+    }
+});
+
+// GET system setting by key
+app.get('/api/settings/:key', async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('system_settings')
+            .select('value')
+            .eq('key', req.params.key)
+            .single();
+
+        if (error && error.code !== 'PGRST116') throw error; // Ignore if not found
+        res.json({ status: 'success', data: data ? data.value : null });
+    } catch (err) {
+        console.error('Fetch Setting Error:', err.message);
+        res.status(500).json({ status: 'error', message: err.message });
+    }
+});
+
+// POST system setting (Upsert)
+app.post('/api/settings/:key', async (req, res) => {
+    try {
+        const { value } = req.body;
+        const { error } = await supabase
+            .from('system_settings')
+            .upsert({
+                key: req.params.key,
+                value,
+                updated_at: new Date().toISOString()
+            }, { onConflict: 'key' });
+
+        if (error) throw error;
+        res.json({ status: 'success', message: 'Setting saved' });
+    } catch (err) {
+        console.error('Save Setting Error:', err.message);
+        res.status(500).json({ status: 'error', message: err.message });
+    }
+});
+
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
     console.log(`🚀 Kasbon Backend Server running on http://localhost:${PORT}`);

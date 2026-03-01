@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
 import Swal from 'sweetalert2';
+import { supabase } from '../supabaseClient';
 
 export type UserRole = 'USER' | 'APPROVER' | 'FINANCE' | 'ADMIN';
 
@@ -15,6 +16,7 @@ export interface ApprovalStep {
     status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'SKIPPED';
     stepOrder: number;
     approvedAt?: string;
+    approvedBy?: string; // Nama asli orang yang approve (asisten)
     remarks?: string;
 }
 
@@ -83,6 +85,7 @@ interface AppContextType {
         dept: string;
         atasanLangsung: string;
         isAtasanLangsungActive: boolean;
+        assistantFor: string[]; // List nama boss yang dia pegang
     };
     setRole: (role: UserRole) => void;
     requests: KasbonRequest[];
@@ -106,6 +109,7 @@ interface AppContextType {
     updateSlotRequest: (request: SlotRequest) => void;
     updateSlotMatrix: (layers: string[]) => void;
     getDynamicApprovalPath: (amount: number, isOverSlotRequest?: boolean) => ApprovalStep[];
+    addLog: (log: Omit<ActivityLog, 'id' | 'timestamp'>) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -113,8 +117,38 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [role, setRoleState] = useState<UserRole>('USER');
     const [requests, setRequests] = useState<KasbonRequest[]>([]);
+    const [assistantForNames, setAssistantForNames] = useState<string[]>([]);
     const userStr = typeof window !== 'undefined' ? localStorage.getItem('kasbon_user') : null;
     const loggedInUser = userStr ? JSON.parse(userStr) : null;
+
+    useEffect(() => {
+        const fetchProxies = async () => {
+            if (!loggedInUser || (!loggedInUser.emp_no && !loggedInUser.employee_id)) return;
+            const myId = loggedInUser.employee_id || loggedInUser.emp_no;
+
+            try {
+                const { data: proxies } = await supabase
+                    .from('user_proxies')
+                    .select('boss_employee_id')
+                    .eq('assistant_employee_id', myId);
+
+                if (proxies && proxies.length > 0) {
+                    const bossIds = proxies.map(p => p.boss_employee_id);
+                    const res = await fetch('http://localhost:3001/api/users/me');
+                    const allUsersResult = await res.json();
+                    if (allUsersResult.status === 'success') {
+                        const bossNames = allUsersResult.data
+                            .filter((u: any) => bossIds.includes(u.employee_id))
+                            .map((u: any) => u.employe_name);
+                        setAssistantForNames(bossNames);
+                    }
+                }
+            } catch (err) {
+                console.error('Failed to fetch proxies:', err);
+            }
+        };
+        fetchProxies();
+    }, [loggedInUser]);
 
     const extractDeptName = (userStr: any) => {
         if (!userStr) return 'IT Operation';
@@ -133,7 +167,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         role,
         dept: extractDeptName(loggedInUser),
         atasanLangsung: loggedInUser?.direct_supervisor || 'Raymond Tjahja',
-        isAtasanLangsungActive: (!loggedInUser || loggedInUser?.direct_supervisor) ? true : false
+        isAtasanLangsungActive: (!loggedInUser || loggedInUser?.direct_supervisor) ? true : false,
+        assistantFor: assistantForNames
     };
 
     const fetchKasbons = async () => {
@@ -190,6 +225,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         fetchApprovalMatrix();
         fetchFinanceUsers();
         fetchOrgChain();
+        fetchActivityLogs();
+        fetchSlotMatrix();
     }, []);
 
 
@@ -224,33 +261,63 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
     };
     const [slotMatrix, setSlotMatrix] = useState<string[]>(['Dept. Head']);
-    const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([
-        {
-            id: 'LOG-001',
-            timestamp: new Date().toISOString(),
-            user: 'System',
-            action: 'Initial Config',
-            details: 'Standard slot limit set to 2 for all departments',
-            type: 'POLICY'
-        }
-    ]);
+    const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
 
-    const addLog = (log: Omit<ActivityLog, 'id' | 'timestamp'>) => {
-        const newLog: ActivityLog = {
-            ...log,
-            id: `LOG-${Math.random().toString(36).substr(2, 9).toUpperCase()}`,
-            timestamp: new Date().toISOString()
-        };
-        setActivityLogs(prev => [newLog, ...prev]);
+    const fetchActivityLogs = async () => {
+        try {
+            const res = await fetch('http://localhost:3001/api/activity-logs');
+            const json = await res.json();
+            if (json.status === 'success' && json.data) {
+                setActivityLogs(json.data.map((l: any) => ({
+                    id: l.id,
+                    timestamp: l.timestamp,
+                    user: l.user,
+                    action: l.action,
+                    details: l.details,
+                    type: l.type
+                })));
+            }
+        } catch (err) {
+            console.error('Failed to fetch activity logs:', err);
+        }
+    };
+
+    const fetchSlotMatrix = async () => {
+        try {
+            const res = await fetch('http://localhost:3001/api/settings/slot_exception_workflow');
+            const json = await res.json();
+            if (json.status === 'success' && json.data) {
+                setSlotMatrix(json.data);
+            }
+        } catch (err) {
+            console.error('Failed to fetch slot matrix:', err);
+        }
+    };
+
+    const addLog = async (log: Omit<ActivityLog, 'id' | 'timestamp'>) => {
+        try {
+            const res = await fetch('http://localhost:3001/api/activity-logs', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(log)
+            });
+            if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+            const data = await res.json();
+            if (data.status === 'success') {
+                setActivityLogs(prev => [data.data, ...prev]);
+            }
+        } catch (err) {
+            console.error('Failed to add log:', err);
+        }
     };
 
     // ===== APPROVAL MATRIX (from DB) =====
     const [matrixConfigs, setMatrixConfigs] = useState<MatrixConfig[]>([
         // Fallback defaults until API loads
-        { id: '1', minAmount: 1, maxAmount: 2000000, layers: ['Requestor', 'Dept. Head'] },
-        { id: '2', minAmount: 2000001, maxAmount: 5000000, layers: ['Requestor', 'Dept. Head', 'Div. Head'] },
-        { id: '3', minAmount: 5000001, maxAmount: 10000000, layers: ['Requestor', 'Dept. Head', 'Div. Head', 'COO'] },
-        { id: '4', minAmount: 10000001, maxAmount: null, layers: ['Requestor', 'Dept. Head', 'Div. Head', 'COO', 'Finance'] },
+        { id: '1', minAmount: 1, maxAmount: 5000000, layers: ['Requestor', 'Dept Senior Manager'] },
+        { id: '2', minAmount: 5000001, maxAmount: 10000000, layers: ['Requestor', 'Dept Senior Manager', 'Vice President'] },
+        { id: '3', minAmount: 10000001, maxAmount: 30000000, layers: ['Requestor', 'Dept Senior Manager', 'Vice President', 'Executive Vice President'] },
+        { id: '4', minAmount: 30000001, maxAmount: null, layers: ['Requestor', 'Dept Senior Manager', 'Vice President', 'Executive Vice President', 'Chief Operating Officer'] },
     ]);
 
     const fetchApprovalMatrix = async () => {
@@ -414,7 +481,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     status: updatedRequest.status,
-                    approver_name: currentUser.name,
+                    approver_name: currentUser.name, // The person who clicked
                     remarks: remarks
                 })
             });
@@ -478,8 +545,27 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
     };
 
-    const updateSlotMatrix = (layers: string[]) => {
-        setSlotMatrix(layers);
+    const updateSlotMatrix = async (layers: string[]) => {
+        try {
+            setSlotMatrix(layers);
+            const res = await fetch('http://localhost:3001/api/settings/slot_exception_workflow', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ value: layers })
+            });
+
+            if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+
+            addLog({
+                user: currentUser.name,
+                action: 'Update Slot Policy',
+                details: `Updated workflow to: ${layers.join(' → ')}`,
+                type: 'POLICY'
+            });
+        } catch (err) {
+            console.error('Failed to save slot matrix:', err);
+            throw err;
+        }
     };
 
     const updateSlotRequest = async (updatedSlotReq: SlotRequest) => {
@@ -532,64 +618,84 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         const chainLen = orgChain.length;
         const selfIdx = chainLen - 1; // Index of requestor (YOU) in chain
 
-        // Helper: resolve a name from the chain by offset from the requestor
-        const getChainPerson = (levelsUp: number): string => {
+        // Helper: resolve a person from the chain by offset from the requestor
+        const getChainPerson = (levelsUp: number): any => {
             const idx = selfIdx - levelsUp;
             if (idx >= 0 && idx < chainLen) {
-                return orgChain[idx].employe_name || orgChain[idx].direct_supervisor || 'Unknown';
+                return orgChain[idx];
             }
-            return 'Unknown';
+            return null;
         };
 
-        // Map layer roles to real names from orgChain
-        const resolveApproverName = (layer: string): string => {
+        // Map layer roles to real names & titles from orgChain
+        const resolveApprover = (layer: string): { name: string, role: string } => {
+            let person: any = null;
+            let roleDisplay = layer;
+            if (isOverSlotRequest && layer === 'Dept Senior Manager') {
+                roleDisplay = 'Dept Senior Manager (Slot Approval)';
+            }
+
             switch (layer) {
                 case 'Requestor':
-                    return currentUser.name;
-                case 'Dept. Head':
-                    // Direct supervisor = 1 level up
-                    return chainLen > 1 ? getChainPerson(1) : currentUser.atasanLangsung;
-                case 'Div. Head':
-                    // 2 levels up
-                    return chainLen > 2 ? getChainPerson(2) : 'HOD';
-                case 'COO':
-                    // 3 levels up (or higher)
-                    return chainLen > 3 ? getChainPerson(3) : 'COO';
+                    return { name: currentUser.name, role: 'Requestor' };
+                case 'Dept Senior Manager':
+                    person = getChainPerson(1);
+                    break;
+                case 'Vice President':
+                    person = getChainPerson(2);
+                    break;
+                case 'Executive Vice President':
+                    person = getChainPerson(3);
+                    break;
+                case 'Chief Operating Officer':
+                    person = getChainPerson(4) || getChainPerson(3); // Fallback to highest available if COO empty
+                    break;
                 case 'Finance':
-                    // Resolve from user_roles FINANCE assignment
-                    return financeUsers.length > 0 ? financeUsers[0].employe_name : 'Finance';
+                    return {
+                        name: financeUsers.length > 0 ? financeUsers[0].employe_name : 'Finance Team',
+                        role: 'Finance'
+                    };
                 default:
-                    return layer;
+                    return { name: layer, role: roleDisplay };
             }
+
+            if (person) {
+                return {
+                    name: person.employe_name || person.direct_supervisor || person.name || 'Unknown',
+                    // Use actual position if available, fallback to the matrix role name
+                    role: person.position || person.role_description || roleDisplay
+                };
+            }
+
+            return { name: 'To Be Decided', role: roleDisplay };
         };
 
         config.layers.forEach((layer) => {
-            let approverName = resolveApproverName(layer);
+            const { name, role } = resolveApprover(layer);
+
+            // DEDUPLICATION: Don't add if the same person is already the previous step
+            if (steps.length > 0 && steps[steps.length - 1].approverName === name) {
+                return;
+            }
+
             let status: 'PENDING' | 'APPROVED' = 'PENDING';
-
-            if (layer === 'Requestor') {
-                status = 'APPROVED';
-            }
-
-            let roleDisplay = layer;
-            if (isOverSlotRequest && layer === 'Dept. Head') {
-                roleDisplay = 'Dept. Head (Slot Approval)';
-            }
+            if (layer === 'Requestor') status = 'APPROVED';
 
             steps.push({
-                approverName,
-                role: roleDisplay,
+                approverName: name,
+                role: role,
                 status,
                 stepOrder: steps.length + 1,
                 approvedAt: status === 'APPROVED' ? new Date().toISOString() : undefined
             });
         });
 
-        // Backup: if Finance not in matrix but amount > 10jt, add it
-        if (amount > 10000000 && !config.layers.includes('Finance')) {
+        // ALWAYS add Finance as the final milestone for all kasbons (Disbursement)
+        if (!steps.find(s => s.role === 'Finance')) {
+            const finance = resolveApprover('Finance');
             steps.push({
-                approverName: financeUsers.length > 0 ? financeUsers[0].employe_name : 'Finance',
-                role: 'Finance',
+                approverName: finance.name,
+                role: finance.role,
                 status: 'PENDING',
                 stepOrder: steps.length + 1
             });
@@ -686,7 +792,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             addSlotRequest,
             updateSlotRequest,
             updateSlotMatrix,
-            getDynamicApprovalPath
+            getDynamicApprovalPath,
+            addLog
         }}>
             {children}
         </AppContext.Provider>

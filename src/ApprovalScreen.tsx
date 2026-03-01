@@ -6,7 +6,7 @@ import {
     ArrowLeft,
     FileText
 } from 'lucide-react';
-import { type KasbonRequest } from './context/AppContext';
+import { useApp, type KasbonRequest } from './context/AppContext';
 
 interface ApprovalScreenProps {
     request: KasbonRequest;
@@ -16,6 +16,10 @@ interface ApprovalScreenProps {
 }
 
 const ApprovalScreen: React.FC<ApprovalScreenProps> = ({ request, onBack, onApprove, onReject }) => {
+    const { currentUser } = useApp();
+    const currentStep = request.approvalPath.find(s => s.status === 'PENDING');
+    const isProxy = currentStep && currentUser.assistantFor.includes(currentStep.approverName);
+
     return (
         <div className="approval-screen-page animate-fade-in">
             <header className="tracker-header">
@@ -24,6 +28,12 @@ const ApprovalScreen: React.FC<ApprovalScreenProps> = ({ request, onBack, onAppr
             </header>
 
             <div className="approval-card-modern">
+                {isProxy && (
+                    <div className="proxy-inform-banner animate-fade-in">
+                        <div className="proxy-badge">PROXY MODE</div>
+                        <p>Anda mengulas dokumen ini sebagai <strong>Asisten/{currentUser.role}</strong> dari <strong>{currentStep?.approverName}</strong></p>
+                    </div>
+                )}
                 {request.type === 'OVER_SLOT' && (
                     <div className="over-slot-warning-banner">
                         <AlertCircle size={18} />
@@ -186,6 +196,16 @@ const ApprovalScreen: React.FC<ApprovalScreenProps> = ({ request, onBack, onAppr
             padding: 12px 16px; margin-bottom: 24px; display: flex; align-items: center; gap: 12px;
             color: #ef4444; font-size: 0.85rem;
         }
+        .proxy-inform-banner {
+            background: #f0f9ff; border: 1px solid #bae6fd; border-radius: 16px;
+            padding: 16px 20px; margin-bottom: 32px; display: flex; align-items: center; gap: 16px;
+        }
+        .proxy-badge {
+            background: #0ea5e9; color: white; font-size: 0.65rem; font-weight: 800;
+            padding: 4px 10px; border-radius: 8px; letter-spacing: 0.05em;
+        }
+        .proxy-inform-banner p { font-size: 0.85rem; color: #0369a1; font-weight: 600; margin: 0; }
+        .proxy-inform-banner strong { color: #0284c7; font-weight: 800; }
         .over-slot-warning-banner strong { font-weight: 800; }
 
         .justification-box-modern {

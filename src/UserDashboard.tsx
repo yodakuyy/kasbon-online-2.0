@@ -23,6 +23,7 @@ import {
     Download,
     Save,
     Trash2,
+    ChevronDown,
     Users,
     X
 } from 'lucide-react';
@@ -35,6 +36,7 @@ import RealisasiReviewScreen from './RealisasiReviewScreen';
 import Swal from 'sweetalert2';
 import axios from 'axios';
 import * as XLSX from 'xlsx';
+import { supabase } from './supabaseClient';
 
 const SlotRequestForm: React.FC<{ currentSlots: number, onBack: () => void, onSubmit: (data: { reason: string, requestedSlots: number }) => void }> = ({ currentSlots, onBack, onSubmit }) => {
     const [reason, setReason] = useState('');
@@ -104,17 +106,25 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
         matrixConfigs, deptSettings, updateMatrixConfig, saveMatrixConfig,
         slotRequests, addSlotRequest, updateSlotRequest,
         slotMatrix, updateSlotMatrix, activityLogs,
-        revokeRequest, updateRequest
+        revokeRequest, updateRequest, addLog
     } = useApp();
 
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [currentView, setCurrentView] = useState<string>('DASHBOARD');
     const [selectedRequest, setSelectedRequest] = useState<KasbonRequest | null>(null);
     const [selectedSlotReq, setSelectedSlotReq] = useState<SlotRequest | null>(null);
-    const [settingsTab, setSettingsTab] = useState<'MATRIX' | 'DEPT' | 'SLOT' | 'LOGS' | 'REMINDER'>('MATRIX');
+    const [settingsTab, setSettingsTab] = useState<'MATRIX' | 'DEPT' | 'SLOT' | 'LOGS' | 'REMINDER' | 'PROXY'>('MATRIX');
 
     // Admin User Management State
     const [modenaUsers, setModenaUsers] = useState<any[]>([]);
+    const [proxyRelations, setProxyRelations] = useState<any[]>([]);
+    const [selectedAssistantId, setSelectedAssistantId] = useState('');
+    const [selectedBossId, setSelectedBossId] = useState('');
+    const [proxyAsstSearch, setProxyAsstSearch] = useState('');
+    const [proxyBossSearch, setProxyBossSearch] = useState('');
+    const [showAsstDrop, setShowAsstDrop] = useState(false);
+    const [showAtasanDrop, setShowAtasanDrop] = useState(false);
+    const [isSavingProxy, setIsSavingProxy] = useState(false);
     const [loadingUsers, setLoadingUsers] = useState(false);
     const [userListPage, setUserListPage] = useState(1);
     const [userSearchTerm, setUserSearchTerm] = useState('');
@@ -160,12 +170,20 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
         }
     };
 
+    const fetchProxyRelations = async () => {
+        const { data } = await supabase
+            .from('user_proxies')
+            .select('*');
+        if (data) setProxyRelations(data);
+    };
+
     const fetchModenaUsers = () => {
         setLoadingUsers(true);
         axios.get('http://localhost:3001/api/users/me')
             .then((res: any) => {
                 if (res.data && res.data.data) {
-                    setModenaUsers(res.data.data);
+                    const activeUsers = res.data.data.filter((u: any) => u.employee_status === 'Active');
+                    setModenaUsers(activeUsers);
                 }
             })
             .catch((err: any) => console.error('Error fetching Modena users:', err))
@@ -173,8 +191,9 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
     };
 
     useEffect(() => {
-        if (currentView === 'ADMIN_USERS') {
+        if (currentView === 'ADMIN_USERS' || (currentView === 'ADMIN_SETTINGS' && settingsTab === 'PROXY')) {
             fetchModenaUsers();
+            fetchProxyRelations();
         }
         if (currentView === 'ADMIN_SETTINGS' && settingsTab === 'DEPT') {
             fetchCostCenterDepts();
@@ -262,7 +281,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
     const totalUserPages = Math.ceil(filteredModenaUsers.length / usersPerPage);
     const paginatedUsers = filteredModenaUsers.slice((userListPage - 1) * usersPerPage, userListPage * usersPerPage);
 
-    const availableLayers = ['Requestor', 'Dept. Head', 'Div. Head', 'COO', 'Finance'];
+    const availableLayers = ['Requestor', 'Dept Senior Manager', 'Vice President', 'Executive Vice President', 'Chief Operating Officer', 'Finance'];
 
     const formatIDR = (val: number | null) => {
         if (val === null) return '∞';
@@ -567,7 +586,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                                     {req.isRealized ? (
                                                         <><CheckCircle2 size={14} /> Realized</>
                                                     ) : req.status === 'PENDING' ? (
-                                                        <><Clock size={14} /> Waiting Manager</>
+                                                        <><Clock size={14} /> Waiting {req.approvalPath.find(s => s.status === 'PENDING')?.role || 'Manager'}</>
                                                     ) : (
                                                         <><CheckCircle2 size={14} /> Approved</>
                                                     )}
@@ -665,13 +684,31 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                             </div>
 
                             <div className="approval-list-modern">
-                                {requests.filter(r => r.status === 'PENDING').length === 0 && slotRequests.filter(s => s.status === 'PENDING').length === 0 ? (
-                                    <div className="empty-state-card">
-                                        <CheckCircle2 size={48} color="#796cf2" />
-                                        <p>Semua persetujuan sudah selesai dikerjakan!</p>
-                                    </div>
-                                ) : (
-                                    requests.filter(r => r.status === 'PENDING').map(req => (
+                                {(() => {
+                                    const pendingRequests = requests.filter(req => {
+                                        if (req.status !== 'PENDING') return false;
+                                        const currentStep = req.approvalPath.find(s => s.status === 'PENDING');
+                                        if (!currentStep) return false;
+
+                                        // BISA APPROVE JIKA: Namanya cocok, ATAU dia adalah asisten dari orang tersebut
+                                        const isMainApprover = currentStep.approverName === currentUser.name;
+                                        const isAssistant = currentUser.assistantFor.includes(currentStep.approverName);
+
+                                        return isMainApprover || isAssistant;
+                                    });
+
+                                    const pendingSlots = slotRequests.filter(s => s.status === 'PENDING');
+
+                                    if (pendingRequests.length === 0 && pendingSlots.length === 0) {
+                                        return (
+                                            <div className="empty-state-card">
+                                                <CheckCircle2 size={48} color="#796cf2" />
+                                                <p>Semua persetujuan sudah selesai dikerjakan!</p>
+                                            </div>
+                                        );
+                                    }
+
+                                    return pendingRequests.map(req => (
                                         <div key={req.id} className="approval-item-card" onClick={() => {
                                             setSelectedRequest(req);
                                             setCurrentView('APPROVAL');
@@ -694,8 +731,8 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                                 <button className="btn-review-now">Review <ChevronRight size={16} /></button>
                                             </div>
                                         </div>
-                                    ))
-                                )}
+                                    ));
+                                })()}
 
                                 {slotRequests.filter(sr => sr.status === 'PENDING').map(sr => (
                                     <div key={sr.id} className="approval-item-card slot-req-item" onClick={() => {
@@ -996,6 +1033,10 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                     className={`tab-btn ${settingsTab === 'REMINDER' ? 'active' : ''}`}
                                     onClick={() => setSettingsTab('REMINDER')}
                                 >Reminder Matrix</button>
+                                <button
+                                    className={`tab-btn ${settingsTab === 'PROXY' ? 'active' : ''}`}
+                                    onClick={() => setSettingsTab('PROXY')}
+                                >Proxy/PA Settings</button>
                                 <button
                                     className={`tab-btn ${settingsTab === 'LOGS' ? 'active' : ''}`}
                                     onClick={() => setSettingsTab('LOGS')}
@@ -1330,7 +1371,272 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                                     </div>
                                                 </div>
                                                 <div className="col-action">
-                                                    <button className="btn-save-inline" title="Save Slot Policy"><Save size={16} /></button>
+                                                    <button
+                                                        className="btn-save-inline"
+                                                        title="Save Slot Policy"
+                                                        onClick={async () => {
+                                                            try {
+                                                                await updateSlotMatrix(slotMatrix);
+                                                                Swal.fire({
+                                                                    icon: 'success',
+                                                                    title: 'Berhasil Disimpan',
+                                                                    text: 'Workflow Slot Exception telah diperbarui ke database.',
+                                                                    confirmButtonColor: '#796cf2'
+                                                                });
+                                                            } catch (err) {
+                                                                Swal.fire({
+                                                                    icon: 'error',
+                                                                    title: 'Gagal Menyimpan',
+                                                                    text: 'Terjadi kesalahan saat menghubungi server. Pastikan backend sudah jalan.'
+                                                                });
+                                                            }
+                                                        }}
+                                                    >
+                                                        <Save size={16} />
+                                                    </button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {settingsTab === 'PROXY' && (
+                                    <div className="proxy-settings-container animate-fade-in">
+                                        <div className="view-title-header" style={{ marginBottom: '24px' }}>
+                                            <div style={{ background: '#f0f9ff', padding: '16px', borderRadius: '12px', border: '1px solid #bae6fd', width: '100%' }}>
+                                                <p style={{ color: '#0369a1', fontSize: '0.85rem' }}>
+                                                    <strong>Info:</strong> Fitur ini memungkinkan <strong>Asisten / Sekretaris</strong> untuk melihat dan menyetujui kasbon atas nama atasan mereka (Delegated Approval).
+                                                </p>
+                                            </div>
+                                        </div>
+
+                                        <div className="proxy-manager-grid">
+                                            {/* Link Form */}
+                                            <div className="proxy-form-card">
+                                                <h4>Tambah Relasi Proxy</h4>
+                                                <div className="form-group-modern">
+                                                    <label>Pilih Atasan</label>
+                                                    <div className="custom-searchable-select" style={{ position: 'relative' }}>
+                                                        <div
+                                                            className="input-modern select-trigger"
+                                                            onClick={() => setShowAtasanDrop(!showAtasanDrop)}
+                                                            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', background: 'white' }}
+                                                        >
+                                                            <span>
+                                                                {selectedBossId
+                                                                    ? modenaUsers.find(u => u.emp_no === selectedBossId)?.employe_name || selectedBossId
+                                                                    : '-- Pilih Atasan --'}
+                                                            </span>
+                                                            <ChevronDown size={16} />
+                                                        </div>
+
+                                                        {showAtasanDrop && (
+                                                            <>
+                                                                <div
+                                                                    style={{ position: 'fixed', inset: 0, zIndex: 99 }}
+                                                                    onClick={() => setShowAtasanDrop(false)}
+                                                                />
+                                                                <div className="custom-dropdown-panel animate-slide-up" style={{
+                                                                    position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100,
+                                                                    background: 'white', border: '1px solid #e2e8f0', borderRadius: '12px',
+                                                                    marginTop: '8px', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1)', overflow: 'hidden'
+                                                                }}>
+                                                                    <div style={{ padding: '10px', borderBottom: '1px solid #f1f5f9' }}>
+                                                                        <div style={{ position: 'relative' }}>
+                                                                            <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                                                                            <input
+                                                                                type="text"
+                                                                                placeholder="Ketik nama atau NIP..."
+                                                                                autoFocus
+                                                                                className="input-modern"
+                                                                                style={{ paddingLeft: '32px', fontSize: '0.8rem', height: '36px', background: '#f8fafc' }}
+                                                                                value={proxyBossSearch}
+                                                                                onChange={e => setProxyBossSearch(e.target.value)}
+                                                                            />
+                                                                        </div>
+                                                                    </div>
+                                                                    <div style={{ maxHeight: '250px', overflowY: 'auto' }}>
+                                                                        {modenaUsers
+                                                                            .filter(u => u.employe_name?.toLowerCase().includes(proxyBossSearch.toLowerCase()) || u.emp_no?.includes(proxyBossSearch))
+                                                                            .slice(0, 50)
+                                                                            .map(u => (
+                                                                                <div
+                                                                                    key={u.emp_no}
+                                                                                    className="dropdown-item-modern"
+                                                                                    style={{ padding: '10px 15px', cursor: 'pointer', fontSize: '0.85rem', transition: 'background 0.2s' }}
+                                                                                    onClick={() => {
+                                                                                        setSelectedBossId(u.emp_no);
+                                                                                        setShowAtasanDrop(false);
+                                                                                        setProxyBossSearch('');
+                                                                                    }}
+                                                                                >
+                                                                                    <div style={{ fontWeight: 600 }}>{u.employe_name}</div>
+                                                                                    <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{u.emp_no}</div>
+                                                                                </div>
+                                                                            ))}
+                                                                    </div>
+                                                                </div>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                </div>
+
+                                                <div className="form-group-modern" style={{ marginTop: '16px' }}>
+                                                    <label>Pilih Asisten</label>
+                                                    <div className="custom-searchable-select" style={{ position: 'relative' }}>
+                                                        <div
+                                                            className="input-modern select-trigger"
+                                                            onClick={() => setShowAsstDrop(!showAsstDrop)}
+                                                            style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', background: 'white' }}
+                                                        >
+                                                            <span>
+                                                                {selectedAssistantId
+                                                                    ? modenaUsers.find(u => u.emp_no === selectedAssistantId)?.employe_name || selectedAssistantId
+                                                                    : '-- Pilih User --'}
+                                                            </span>
+                                                            <ChevronDown size={16} />
+                                                        </div>
+
+                                                        {showAsstDrop && (
+                                                            <>
+                                                                <div
+                                                                    style={{ position: 'fixed', inset: 0, zIndex: 99 }}
+                                                                    onClick={() => setShowAsstDrop(false)}
+                                                                />
+                                                                <div className="custom-dropdown-panel animate-slide-up" style={{
+                                                                    position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 100,
+                                                                    background: 'white', border: '1px solid #e2e8f0', borderRadius: '12px',
+                                                                    marginTop: '8px', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.1)', overflow: 'hidden'
+                                                                }}>
+                                                                    <div style={{ padding: '10px', borderBottom: '1px solid #f1f5f9' }}>
+                                                                        <div style={{ position: 'relative' }}>
+                                                                            <Search size={14} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: '#94a3b8' }} />
+                                                                            <input
+                                                                                type="text"
+                                                                                placeholder="Ketik nama atau NIP..."
+                                                                                autoFocus
+                                                                                className="input-modern"
+                                                                                style={{ paddingLeft: '32px', fontSize: '0.8rem', height: '36px', background: '#f8fafc' }}
+                                                                                value={proxyAsstSearch}
+                                                                                onChange={e => setProxyAsstSearch(e.target.value)}
+                                                                            />
+                                                                        </div>
+                                                                    </div>
+                                                                    <div style={{ maxHeight: '250px', overflowY: 'auto' }}>
+                                                                        {modenaUsers
+                                                                            .filter(u => u.employe_name?.toLowerCase().includes(proxyAsstSearch.toLowerCase()) || u.emp_no?.includes(proxyAsstSearch))
+                                                                            .slice(0, 50)
+                                                                            .map(u => (
+                                                                                <div
+                                                                                    key={u.emp_no}
+                                                                                    className="dropdown-item-modern"
+                                                                                    style={{ padding: '10px 15px', cursor: 'pointer', fontSize: '0.85rem', transition: 'background 0.2s' }}
+                                                                                    onClick={() => {
+                                                                                        setSelectedAssistantId(u.emp_no);
+                                                                                        setShowAsstDrop(false);
+                                                                                        setProxyAsstSearch('');
+                                                                                    }}
+                                                                                >
+                                                                                    <div style={{ fontWeight: 600 }}>{u.employe_name}</div>
+                                                                                    <div style={{ fontSize: '0.75rem', color: '#64748b' }}>{u.emp_no}</div>
+                                                                                </div>
+                                                                            ))}
+                                                                    </div>
+                                                                </div>
+                                                            </>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    className="btn-add-proxy"
+                                                    style={{
+                                                        marginTop: '20px', width: '100%', background: '#796cf2', color: 'white',
+                                                        border: 'none', padding: '12px', borderRadius: '10px', fontWeight: 700,
+                                                        cursor: isSavingProxy ? 'wait' : 'pointer', opacity: isSavingProxy ? 0.7 : 1
+                                                    }}
+                                                    disabled={isSavingProxy || !selectedAssistantId || !selectedBossId}
+                                                    onClick={async () => {
+                                                        if (!selectedAssistantId || !selectedBossId) return;
+                                                        setIsSavingProxy(true);
+                                                        const { error } = await supabase
+                                                            .from('user_proxies')
+                                                            .insert([{ assistant_employee_id: selectedAssistantId, boss_employee_id: selectedBossId }]);
+
+                                                        if (error) {
+                                                            Swal.fire('Error', error.message, 'error');
+                                                        } else {
+                                                            Swal.fire('Success', 'Relasi proxy berhasil ditambahkan', 'success');
+                                                            addLog({
+                                                                user: currentUser.name,
+                                                                action: 'Add Proxy',
+                                                                details: `Connected Assistant ${selectedAssistantId} to Boss ${selectedBossId}`,
+                                                                type: 'POLICY'
+                                                            });
+                                                            fetchProxyRelations();
+                                                            setSelectedAssistantId('');
+                                                            setSelectedBossId('');
+                                                        }
+                                                        setIsSavingProxy(false);
+                                                    }}
+                                                >
+                                                    {isSavingProxy ? 'Menyimpan...' : 'Hubungkan Proxy'}
+                                                </button>
+                                            </div>
+
+                                            {/* Active List */}
+                                            <div className="proxy-list-card">
+                                                <h4>Daftar Proxy Aktif</h4>
+                                                <div className="proxy-table-mini">
+                                                    <table>
+                                                        <thead>
+                                                            <tr>
+                                                                <th>Atasan</th>
+                                                                <th>Asisten</th>
+                                                                <th>Aksi</th>
+                                                            </tr>
+                                                        </thead>
+                                                        <tbody>
+                                                            {proxyRelations.length === 0 ? (
+                                                                <tr><td colSpan={3} style={{ textAlign: 'center', padding: '20px', color: '#94a3b8' }}>Belum ada relasi proxy aktif.</td></tr>
+                                                            ) : (
+                                                                proxyRelations.map(rel => {
+                                                                    const assistant = modenaUsers.find(u => u.emp_no === rel.assistant_employee_id);
+                                                                    const boss = modenaUsers.find(u => u.emp_no === rel.boss_employee_id);
+                                                                    return (
+                                                                        <tr key={rel.id}>
+                                                                            <td><strong>{boss?.employe_name || rel.boss_employee_id}</strong></td>
+                                                                            <td>{assistant?.employe_name || rel.assistant_employee_id}</td>
+                                                                            <td>
+                                                                                <button
+                                                                                    className="btn-del-proxy"
+                                                                                    onClick={async () => {
+                                                                                        const result = await Swal.fire({
+                                                                                            title: 'Hapus Proxy?',
+                                                                                            text: 'User tidak lagi memiliki akses delegasi.',
+                                                                                            icon: 'warning',
+                                                                                            showCancelButton: true,
+                                                                                            confirmButtonColor: '#ef4444',
+                                                                                            confirmButtonText: 'Ya, Hapus'
+                                                                                        });
+                                                                                        if (result.isConfirmed) {
+                                                                                            await supabase.from('user_proxies').delete().eq('id', rel.id);
+                                                                                            addLog({
+                                                                                                user: currentUser.name,
+                                                                                                action: 'Remove Proxy',
+                                                                                                details: `Removed Proxy ID: ${rel.id}`,
+                                                                                                type: 'POLICY'
+                                                                                            });
+                                                                                            fetchProxyRelations();
+                                                                                        }
+                                                                                    }}
+                                                                                >Hapus</button>
+                                                                            </td>
+                                                                        </tr>
+                                                                    );
+                                                                })
+                                                            )}
+                                                        </tbody>
+                                                    </table>
                                                 </div>
                                             </div>
                                         </div>
@@ -2080,6 +2386,18 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
         .history-status-badge.APPROVED { background: #eff6ff; color: #2563eb; border: 1px solid #dbeafe; }
         
         .btn-view-history { background: #f8fafc; border: 1px solid #e2e8f0; color: #64748b; padding: 8px 16px; border-radius: 12px; font-size: 0.85rem; font-weight: 700; cursor: pointer; transition: all 0.2s; }
+
+        /* Proxy Settings Styles */
+        .proxy-manager-grid { display: grid; grid-template-columns: 350px 1fr; gap: 24px; }
+        .proxy-form-card { background: #f8fafc; padding: 24px; border-radius: 16px; border: 1px solid #e2e8f0; }
+        .proxy-form-card h4 { font-size: 0.9rem; font-weight: 800; color: #475569; margin-bottom: 20px; text-transform: uppercase; }
+        .input-modern { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #cbd5e1; margin-top: 6px; }
+        .proxy-list-card h4 { font-size: 0.9rem; font-weight: 800; color: #475569; margin-bottom: 20px; text-transform: uppercase; }
+        .proxy-table-mini table { width: 100%; border-collapse: collapse; }
+        .proxy-table-mini th { text-align: left; font-size: 0.75rem; color: #94a3b8; padding: 12px; border-bottom: 1px solid #f1f5f9; }
+        .proxy-table-mini td { padding: 12px; border-bottom: 1px solid #f1f5f9; font-size: 0.85rem; }
+        .btn-del-proxy { background: #fee2e2; color: #ef4444; border: none; padding: 4px 10px; border-radius: 6px; font-weight: 700; cursor: pointer; font-size: 0.75rem; }
+
         .btn-view-history:hover { background: #1e293b; border-color: #1e293b; color: white; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
         
         /* --- APPROVAL LIST STYLES --- */
