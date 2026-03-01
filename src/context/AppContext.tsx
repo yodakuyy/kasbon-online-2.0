@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
+import Swal from 'sweetalert2';
 
 export type UserRole = 'USER' | 'APPROVER' | 'FINANCE' | 'ADMIN';
 
@@ -14,6 +15,7 @@ export interface ApprovalStep {
     status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'SKIPPED';
     stepOrder: number;
     approvedAt?: string;
+    remarks?: string;
 }
 
 export interface MatrixConfig {
@@ -93,8 +95,9 @@ interface AppContextType {
     matrixConfigs: MatrixConfig[];
     deptSettings: DeptSetting[];
     updateMatrixConfig: (config: MatrixConfig) => void;
+    saveMatrixConfig: (config: MatrixConfig) => Promise<void>;
     updateDeptSetting: (setting: DeptSetting) => void;
-    updateRequest: (request: KasbonRequest) => void;
+    updateRequest: (request: KasbonRequest, remarks?: string) => void;
     revokeRequest: (requestId: string, reason: string) => void;
     slotRequests: SlotRequest[];
     slotMatrix: string[];
@@ -110,6 +113,28 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
     const [role, setRoleState] = useState<UserRole>('USER');
     const [requests, setRequests] = useState<KasbonRequest[]>([]);
+    const userStr = typeof window !== 'undefined' ? localStorage.getItem('kasbon_user') : null;
+    const loggedInUser = userStr ? JSON.parse(userStr) : null;
+
+    const extractDeptName = (userStr: any) => {
+        if (!userStr) return 'IT Operation';
+        if (userStr.cost_center) {
+            const parts = userStr.cost_center.trim().split(/\s+/);
+            if (parts.length > 1) {
+                return parts.slice(1).join(' '); // removes the 'CB018-CC028' prefix
+            }
+            return userStr.cost_center; // if no space, just return the whole thing
+        }
+        return userStr.department || 'Unknown Dept';
+    };
+
+    const currentUser = {
+        name: loggedInUser?.name || 'Fahmi Ilmawan',
+        role,
+        dept: extractDeptName(loggedInUser),
+        atasanLangsung: loggedInUser?.direct_supervisor || 'Raymond Tjahja',
+        isAtasanLangsungActive: (!loggedInUser || loggedInUser?.direct_supervisor) ? true : false
+    };
 
     const fetchKasbons = async () => {
         try {
@@ -142,7 +167,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                             role: a.role_description,
                             status: a.status,
                             stepOrder: a.step_order,
-                            approvedAt: a.approved_at
+                            approvedAt: a.approved_at,
+                            remarks: a.remarks
                         }))
                         : [],
                     currentStepIndex: dbKasbon.current_step_index,
@@ -159,24 +185,44 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     useEffect(() => {
         fetchKasbons();
+        fetchSlotRequests();
+        fetchDeptSettings();
+        fetchApprovalMatrix();
+        fetchFinanceUsers();
+        fetchOrgChain();
     }, []);
 
 
-    const [slotRequests, setSlotRequests] = useState<SlotRequest[]>([
-        {
-            id: 'SLOT-001',
-            requestor: 'Andi Suherman',
-            department: 'Production',
-            reason: 'Banyak personil lapangan baru yang butuh operasional cash',
-            currentSlots: 2,
-            requestedSlots: 3,
-            status: 'PENDING',
-            date: '2026-02-27',
-            approvalPath: [
-                { approverName: 'Fahmi Ilmawan', role: 'Dept. Head', status: 'PENDING', stepOrder: 1 }
-            ]
+    const [slotRequests, setSlotRequests] = useState<SlotRequest[]>([]);
+
+    const fetchSlotRequests = async () => {
+        try {
+            const res = await fetch('http://localhost:3001/api/slot-requests');
+            const json = await res.json();
+            if (json.status === 'success' && json.data) {
+                const mappedSlots = json.data.map((ds: any) => ({
+                    id: ds.id,
+                    requestor: ds.requestor_name,
+                    department: ds.department_name,
+                    reason: ds.reason,
+                    currentSlots: ds.current_slots,
+                    requestedSlots: ds.requested_slots,
+                    status: ds.status,
+                    date: ds.date,
+                    approvalPath: ds.approvals ? ds.approvals.sort((a: any, b: any) => a.step_order - b.step_order).map((a: any) => ({
+                        approverName: a.approver_name,
+                        role: a.role_description,
+                        status: a.status,
+                        stepOrder: a.step_order,
+                        approvedAt: a.approved_at
+                    })) : []
+                }));
+                setSlotRequests(mappedSlots);
+            }
+        } catch (error) {
+            console.error('Failed to fetch slot requests:', error);
         }
-    ]);
+    };
     const [slotMatrix, setSlotMatrix] = useState<string[]>(['Dept. Head']);
     const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([
         {
@@ -250,7 +296,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         try {
             const res = await fetch('http://localhost:3001/api/role-users/FINANCE');
             const json = await res.json();
-            if (json.status === 'success') {
+            if (json.status === 'success' && json.data?.length > 0) {
                 setFinanceUsers(json.data);
             }
         } catch (err) {
@@ -258,24 +304,67 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }
     };
 
+    // Fetch on mount
     useEffect(() => {
         fetchApprovalMatrix();
-        fetchOrgChain();
         fetchFinanceUsers();
+        fetchOrgChain();
     }, []);
 
-    const [deptSettings, setDeptSettings] = useState<DeptSetting[]>([
-        { deptId: 'IT', deptName: 'IT Operation', maxSlots: 2, outstandingLimit: 5000000 },
-        { deptId: 'MKT', deptName: 'Marketing', maxSlots: 2, outstandingLimit: 3000000 },
-    ]);
+    // Re-fetch orgChain when localStorage changes (i.e. after login)
+    useEffect(() => {
+        const checkAndFetch = () => {
+            const userStr = localStorage.getItem('kasbon_user');
+            if (userStr) {
+                try {
+                    const user = JSON.parse(userStr);
+                    if (user?.emp_no && orgChain.length === 0) {
+                        fetchOrgChain();
+                        fetchFinanceUsers();
+                    }
+                } catch { /* ignore */ }
+            }
+        };
 
-    const updateMatrixConfig = async (config: MatrixConfig) => {
-        // Optimistic update locally
+        // Poll every 2 seconds to catch login state
+        const interval = setInterval(checkAndFetch, 2000);
+        // Also listen for storage events (cross-tab)
+        window.addEventListener('storage', checkAndFetch);
+
+        return () => {
+            clearInterval(interval);
+            window.removeEventListener('storage', checkAndFetch);
+        };
+    }, [orgChain.length]);
+
+    const [deptSettings, setDeptSettings] = useState<DeptSetting[]>([]);
+
+    const fetchDeptSettings = async () => {
+        try {
+            const res = await fetch('http://localhost:3001/api/departments');
+            const json = await res.json();
+            if (json.status === 'success' && json.data) {
+                const mapped = json.data.map((d: any) => ({
+                    deptId: d.code,
+                    deptName: d.name,
+                    maxSlots: d.max_slots,
+                    outstandingLimit: d.outstanding_limit
+                }));
+                setDeptSettings(mapped);
+            }
+        } catch (err) {
+            console.error('Failed to fetch dept settings:', err);
+        }
+    };
+
+    const updateMatrixConfig = (config: MatrixConfig) => {
         setMatrixConfigs(prev => prev.map(c => c.id === config.id ? config : c));
+    };
 
+    const saveMatrixConfig = async (config: MatrixConfig) => {
         // Save to DB
         try {
-            await fetch(`http://localhost:3001/api/approval-matrix/${config.id}`, {
+            const res = await fetch(`http://localhost:3001/api/approval-matrix/${config.id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -284,8 +373,33 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                     layers: config.layers,
                 }),
             });
+
+            const data = await res.json();
+
+            if (data.status === 'success') {
+                Swal.fire({
+                    icon: 'success',
+                    title: 'Berhasil Disimpan',
+                    text: 'Konfigurasi layer persetujuan telah diperbarui di database.',
+                    confirmButtonColor: '#796cf2'
+                });
+
+                addLog({
+                    user: currentUser.name,
+                    action: 'Update Matrix',
+                    details: `Updated range Rp ${config.minAmount.toLocaleString()} - ${config.maxAmount ? config.maxAmount.toLocaleString() : '∞'}`,
+                    type: 'POLICY'
+                });
+            } else {
+                throw new Error(data.message || 'Failed to save');
+            }
         } catch (err) {
             console.error('Failed to update matrix config:', err);
+            Swal.fire({
+                icon: 'error',
+                title: 'Gagal Menyimpan',
+                text: 'Terjadi kesalahan saat menyimpan perubahan ke database.'
+            });
         }
     };
 
@@ -293,8 +407,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setDeptSettings(prev => prev.map(s => s.deptId === setting.deptId ? setting : s));
     };
 
-    const updateRequest = (updatedRequest: KasbonRequest) => {
-        setRequests(prev => prev.map(req => req.id === updatedRequest.id ? updatedRequest : req));
+    const updateRequest = async (updatedRequest: KasbonRequest, remarks?: string) => {
+        try {
+            await fetch(`http://localhost:3001/api/kasbons/${updatedRequest.id}/status`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    status: updatedRequest.status,
+                    approver_name: currentUser.name,
+                    remarks: remarks
+                })
+            });
+            await fetchKasbons(); // Refresh global list
+        } catch (error) {
+            console.error('Failed to update request:', error);
+            Swal.fire({ icon: 'error', title: 'Error', text: 'Gagal update status kasbon' });
+        }
     };
 
     const revokeRequest = (requestId: string, reason: string) => {
@@ -312,73 +440,85 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }));
     };
 
-    const addSlotRequest = (newSlotReq: Omit<SlotRequest, 'id' | 'status' | 'date' | 'approvalPath'>) => {
-        const fullSlotReq: SlotRequest = {
-            ...newSlotReq,
-            id: `SLOT-00${slotRequests.length + 1}`,
-            status: 'PENDING',
-            date: new Date().toISOString().split('T')[0],
-            approvalPath: slotMatrix.map((layer, idx) => ({
-                approverName: layer === 'Dept. Head' ? currentUser.atasanLangsung : (layer === 'Div. Head' ? 'HOD Name' : 'Team Finance'),
+    const addSlotRequest = async (newSlotReq: Omit<SlotRequest, 'id' | 'status' | 'date' | 'approvalPath'>) => {
+        try {
+            const approvalPath = slotMatrix.map((layer, idx) => ({
+                approverName: layer === 'Dept. Head' ? currentUser.atasanLangsung : (layer === 'Div. Head' ? 'Sr. Manager Name' : 'Finance Team'),
                 role: layer,
                 status: 'PENDING',
                 stepOrder: idx + 1
-            }))
-        };
-        setSlotRequests([...slotRequests, fullSlotReq]);
+            }));
+
+            const res = await fetch('http://localhost:3001/api/slot-requests', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    requestor_emp_no: loggedInUser?.emp_no,
+                    requestor_name: currentUser.name,
+                    department_name: currentUser.dept,
+                    cost_center_code: loggedInUser?.cost_center || 'HO-MOLOGIZ', // Default for now
+                    reason: newSlotReq.reason,
+                    current_slots: newSlotReq.currentSlots,
+                    requested_slots: newSlotReq.requestedSlots,
+                    approvalPath: approvalPath
+                })
+            });
+
+            if (res.ok) {
+                fetchSlotRequests();
+                addLog({
+                    user: currentUser.name,
+                    action: 'Request Extra Slot',
+                    details: `Requested ${newSlotReq.requestedSlots} slots for ${currentUser.dept}`,
+                    type: 'SLOT'
+                });
+            }
+        } catch (error) {
+            console.error('Failed to add slot request:', error);
+        }
     };
 
     const updateSlotMatrix = (layers: string[]) => {
         setSlotMatrix(layers);
     };
 
-    const updateSlotRequest = (updatedSlotReq: SlotRequest) => {
-        setSlotRequests(prev => prev.map(req => req.id === updatedSlotReq.id ? updatedSlotReq : req));
-
-        // If approved, automatically update department maxSlots
-        if (updatedSlotReq.status === 'APPROVED') {
-            const dept = deptSettings.find(d => d.deptName === updatedSlotReq.department);
-            if (dept) {
-                updateDeptSetting({ ...dept, maxSlots: updatedSlotReq.requestedSlots });
-                addLog({
-                    user: currentUser.name,
-                    action: 'Approved Slot Exception',
-                    details: `Dept: ${updatedSlotReq.department} | ${updatedSlotReq.currentSlots} -> ${updatedSlotReq.requestedSlots} Slots`,
-                    type: 'SLOT'
-                });
-            }
-        } else if (updatedSlotReq.status === 'REJECTED') {
-            addLog({
-                user: currentUser.name,
-                action: 'Rejected Slot Exception',
-                details: `Request ${updatedSlotReq.id} by ${updatedSlotReq.requestor} was rejected`,
-                type: 'SLOT'
+    const updateSlotRequest = async (updatedSlotReq: SlotRequest) => {
+        try {
+            const res = await fetch(`http://localhost:3001/api/slot-requests/${updatedSlotReq.id}/status`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    status: updatedSlotReq.status,
+                    approver_name: currentUser.name // Current user is the one approving/rejecting
+                })
             });
-        }
-    };
 
-    const userStr = typeof window !== 'undefined' ? localStorage.getItem('kasbon_user') : null;
-    const loggedInUser = userStr ? JSON.parse(userStr) : null;
+            if (res.ok) {
+                fetchSlotRequests();
 
-    const extractDeptName = (userStr: any) => {
-        if (!userStr) return 'IT Operation';
-        if (userStr.cost_center) {
-            const parts = userStr.cost_center.trim().split(/\s+/);
-            if (parts.length > 1) {
-                return parts.slice(1).join(' '); // removes the 'CB018-CC028' prefix
+                if (updatedSlotReq.status === 'APPROVED') {
+                    addLog({
+                        user: currentUser.name,
+                        action: 'Approved Slot Exception',
+                        details: `Dept: ${updatedSlotReq.department} | Updated to ${updatedSlotReq.requestedSlots} Slots`,
+                        type: 'SLOT'
+                    });
+                    // Refresh department settings too
+                    fetchDeptSettings();
+                } else if (updatedSlotReq.status === 'REJECTED') {
+                    addLog({
+                        user: currentUser.name,
+                        action: 'Rejected Slot Exception',
+                        details: `Request ${updatedSlotReq.id} by ${updatedSlotReq.requestor} was rejected`,
+                        type: 'SLOT'
+                    });
+                }
             }
-            return userStr.cost_center; // if no space, just return the whole thing
+        } catch (error) {
+            console.error('Failed to update slot request:', error);
         }
-        return userStr.department || 'Unknown Dept';
     };
 
-    const currentUser = {
-        name: loggedInUser?.name || 'Fahmi Ilmawan',
-        role,
-        dept: extractDeptName(loggedInUser),
-        atasanLangsung: loggedInUser?.direct_supervisor || 'Raymond Tjahja',
-        isAtasanLangsungActive: (!loggedInUser || loggedInUser?.direct_supervisor) ? true : false
-    };
 
     const getDynamicApprovalPath = (amount: number, isOverSlotRequest?: boolean): ApprovalStep[] => {
         const config = matrixConfigs.find(c =>
@@ -441,7 +581,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 role: roleDisplay,
                 status,
                 stepOrder: steps.length + 1,
-                approvedAt: status === 'APPROVED' ? new Date().toLocaleString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : undefined
+                approvedAt: status === 'APPROVED' ? new Date().toISOString() : undefined
             });
         });
 
@@ -479,12 +619,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
         const emp_no = loggedUser?.emp_no || 'NIP-UNKNOWN';
         const name = loggedUser?.name || currentUser.name;
-        const costCenter = loggedUser?.cost_center || 'UNKNOWN-CC';
+        const rawCC = loggedUser?.cost_center || 'UNKNOWN-CC';
+        let costCenter = rawCC;
+        const ccMatch = rawCC.trim().match(/^(?:\d{6,7}-)?([A-Z0-9]+-[A-Z0-9]+)\s+(.+)$/i);
+        if (ccMatch) {
+            costCenter = ccMatch[1];
+        }
 
         const activeRequests = requests.filter(r => r.requestor === name && r.status !== 'SETTLED');
         const nextSlot = activeRequests.length + 1;
-
-        // This relies on the live fetched data in UserDashboard ideally, but for now fallback to 2
         const isOverLimit = nextSlot > 2;
 
         const payload = {
@@ -500,7 +643,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             items: newReq.items,
             slot_used: nextSlot,
             type: newReq.type || (isOverLimit ? 'OVER_SLOT' : 'REGULAR'),
-            approvalPath: getDynamicApprovalPath(newReq.amount, isOverLimit)
+            approvalPath: getDynamicApprovalPath(newReq.amount, isOverLimit),
+            slot_justification: newReq.slotJustification
         };
 
         try {
@@ -511,12 +655,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             });
             const data = await res.json();
             if (data.status === 'success') {
-                fetchKasbons(); // Refresh data after save
+                await fetchKasbons(); // Refresh data after save
+                return data.data;
             } else {
-                console.error('Save failed:', data.message);
+                throw new Error(data.message || 'Gagal menyimpan kasbon');
             }
         } catch (error) {
             console.error('Error saving kasbon:', error);
+            throw error; // Re-throw for UI catch
         }
     };
 
@@ -530,6 +676,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             matrixConfigs,
             deptSettings,
             updateMatrixConfig,
+            saveMatrixConfig,
             updateDeptSetting,
             updateRequest,
             revokeRequest,

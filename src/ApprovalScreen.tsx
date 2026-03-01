@@ -3,7 +3,8 @@ import {
     CheckCircle2,
     XCircle,
     AlertCircle,
-    ArrowLeft
+    ArrowLeft,
+    FileText
 } from 'lucide-react';
 import { type KasbonRequest } from './context/AppContext';
 
@@ -88,6 +89,33 @@ const ApprovalScreen: React.FC<ApprovalScreenProps> = ({ request, onBack, onAppr
                     </div>
                 )}
 
+                <div className="approval-attachments-section">
+                    <h4>Dokumen Lampiran</h4>
+                    <div className="attachments-list-grid">
+                        {request.slotJustification ? (
+                            request.slotJustification.split(';').map((part, pIdx) => {
+                                if (part.includes('|')) {
+                                    const [name, url] = part.split('|');
+                                    return (
+                                        <a href={url} target="_blank" rel="noopener noreferrer" key={pIdx} className="app-attachment-item">
+                                            <FileText size={16} />
+                                            <span>{name}</span>
+                                        </a>
+                                    );
+                                }
+                                return (
+                                    <div key={pIdx} className="app-attachment-item text">
+                                        <FileText size={16} />
+                                        <span>{part}</span>
+                                    </div>
+                                );
+                            })
+                        ) : (
+                            <p className="no-attachments-text">Tidak ada lampiran dokumen.</p>
+                        )}
+                    </div>
+                </div>
+
                 <div className="approval-actions-footer">
                     <button className="btn-reject-modern" onClick={() => onReject(request.id)}>
                         <XCircle size={18} /> Tolak
@@ -166,6 +194,20 @@ const ApprovalScreen: React.FC<ApprovalScreenProps> = ({ request, onBack, onAppr
         }
         .justification-box-modern h5 { font-size: 0.75rem; font-weight: 800; color: #b45309; text-transform: uppercase; margin-bottom: 12px; letter-spacing: 0.05em; }
         .justification-box-modern p { font-size: 1rem; color: #92400e; font-style: italic; line-height: 1.6; font-weight: 500; }
+
+        .approval-attachments-section { margin-top: 32px; padding-top: 32px; border-top: 1px solid #f1f5f9; }
+        .approval-attachments-section h4 { font-size: 0.8rem; font-weight: 800; color: #94a3b8; text-transform: uppercase; margin-bottom: 16px; letter-spacing: 0.05em; }
+        .attachments-list-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+        .app-attachment-item { 
+          display: flex; align-items: center; gap: 10px; padding: 12px 16px; 
+          background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 12px;
+          text-decoration: none; font-size: 0.9rem; font-weight: 600; color: var(--primary);
+          transition: all 0.2s;
+        }
+        .app-attachment-item:hover { background: #f0fdf4; border-color: var(--primary); transform: translateY(-1px); }
+        .app-attachment-item.text { color: #4b5563; cursor: default; }
+        .app-attachment-item.text:hover { transform: none; background: #f8fafc; border-color: #e2e8f0; }
+        .no-attachments-text { font-size: 0.9rem; color: #94a3b8; font-style: italic; }
       `}</style>
         </div>
     );

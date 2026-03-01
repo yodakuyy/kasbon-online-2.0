@@ -20,7 +20,6 @@ import {
     ArrowLeft,
     PlusCircle,
     Download,
-    ShieldCheck,
     Save,
     Trash2,
     Users,
@@ -99,10 +98,10 @@ interface UserDashboardProps {
 const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout }) => {
     const {
         requests, currentUser, stats, setRole,
-        matrixConfigs, deptSettings, updateMatrixConfig,
+        matrixConfigs, deptSettings, updateMatrixConfig, saveMatrixConfig,
         slotRequests, addSlotRequest, updateSlotRequest,
         slotMatrix, updateSlotMatrix, activityLogs,
-        revokeRequest
+        revokeRequest, updateRequest
     } = useApp();
 
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -168,7 +167,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
         if (currentView === 'ADMIN_USERS') {
             fetchModenaUsers();
         }
-        if (currentView === 'ADMIN_GOVERNANCE' && settingsTab === 'DEPT') {
+        if (currentView === 'ADMIN_SETTINGS' && settingsTab === 'DEPT') {
             fetchCostCenterDepts();
         }
     }, [currentView, settingsTab]);
@@ -351,10 +350,6 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                     onClick={() => setCurrentView('ADMIN_USERS')}
                                 ><Users size={20} /> User Management</button>
                                 <button
-                                    className={`nav-btn ${currentView === 'ADMIN_GOVERNANCE' ? 'active' : ''}`}
-                                    onClick={() => setCurrentView('ADMIN_GOVERNANCE')}
-                                ><ShieldCheck size={20} /> Governance</button>
-                                <button
                                     className={`nav-btn ${currentView === 'ADMIN_SETTINGS' ? 'active' : ''}`}
                                     onClick={() => setCurrentView('ADMIN_SETTINGS')}
                                 ><Settings size={20} /> Settings</button>
@@ -440,7 +435,29 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                         <h1>Halo, {currentUser.name.split(' ')[0]} 👋</h1>
                                         <p>Departemen: <strong>{currentUser.dept}</strong></p>
                                     </div>
-                                    <button className="btn-add-kasbon" onClick={() => setIsModalOpen(true)}>
+                                    <button
+                                        className="btn-add-kasbon"
+                                        onClick={() => {
+                                            const maxSlots = deptSettings.find(d => d.deptName === currentUser.dept)?.maxSlots || 2;
+                                            if (activeKasbonCount >= maxSlots) {
+                                                Swal.fire({
+                                                    title: 'Slot Kasbon Penuh',
+                                                    html: `Departemen Anda (<b>${currentUser.dept}</b>) sudah mencapai limit <b>${maxSlots} kasbon aktif</b>.<br/><br/>Silahkan ajukan penambahan slot sementara jika ada kebutuhan mendesak.`,
+                                                    icon: 'warning',
+                                                    showCancelButton: true,
+                                                    confirmButtonText: 'Ajukan Slot Tambahan',
+                                                    cancelButtonText: 'Nanti Saja',
+                                                    confirmButtonColor: '#796cf2'
+                                                }).then((result) => {
+                                                    if (result.isConfirmed) {
+                                                        setCurrentView('REQUEST_SLOT');
+                                                    }
+                                                });
+                                            } else {
+                                                setIsModalOpen(true);
+                                            }
+                                        }}
+                                    >
                                         <Plus size={20} /> Ajukan Kasbon Baru
                                     </button>
                                 </div>
@@ -727,8 +744,29 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                         <ApprovalScreen
                             request={selectedRequest}
                             onBack={() => setCurrentView('APPROVAL_LIST')}
-                            onApprove={() => setCurrentView('APPROVAL_LIST')}
-                            onReject={() => setCurrentView('APPROVAL_LIST')}
+                            onApprove={async () => {
+                                await updateRequest({ ...selectedRequest, status: 'APPROVED' });
+                                setCurrentView('APPROVAL_LIST');
+                                Swal.fire({ icon: 'success', title: 'Berhasil!', text: 'Kasbon telah disetujui.', timer: 1500, showConfirmButton: false });
+                            }}
+                            onReject={async () => {
+                                const { value: reason } = await Swal.fire({
+                                    title: 'Tolak Kasbon?',
+                                    text: "Berikan alasan penolakan kasbon ini:",
+                                    input: 'textarea',
+                                    inputPlaceholder: 'Tulis alasan di sini...',
+                                    showCancelButton: true,
+                                    confirmButtonColor: '#ef4444',
+                                    confirmButtonText: 'Ya, Tolak',
+                                    cancelButtonText: 'Batal'
+                                });
+
+                                if (reason) {
+                                    await updateRequest({ ...selectedRequest, status: 'REJECTED' }, reason);
+                                    setCurrentView('APPROVAL_LIST');
+                                    Swal.fire({ icon: 'success', title: 'Ditolak', text: 'Kasbon telah ditolak.', timer: 1500, showConfirmButton: false });
+                                }
+                            }}
                         />
                     )}
 
@@ -805,12 +843,12 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                         </div>
                     )}
 
-                    {currentView === 'ADMIN_GOVERNANCE' && (
+                    {currentView === 'ADMIN_SETTINGS' && (
                         <div className="governance-container">
                             <div className="view-title-header">
                                 <div>
-                                    <h1>Governance & Policies</h1>
-                                    <p style={{ color: '#64748b', fontSize: '0.95rem' }}>Atur threshold approval dan kebijakan departemen</p>
+                                    <h1>Settings</h1>
+                                    <p style={{ color: '#64748b', fontSize: '0.95rem' }}>Konfigurasi matrix dan kebijakan sistem</p>
                                 </div>
                             </div>
 
@@ -894,7 +932,13 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                                         </div>
                                                     </div>
                                                     <div className="col-action">
-                                                        <button className="btn-save-inline" title="Save Matrix"><Save size={16} /></button>
+                                                        <button
+                                                            className="btn-save-inline"
+                                                            title="Save Matrix"
+                                                            onClick={() => saveMatrixConfig(config)}
+                                                        >
+                                                            <Save size={16} />
+                                                        </button>
                                                     </div>
                                                 </div>
                                             ))}

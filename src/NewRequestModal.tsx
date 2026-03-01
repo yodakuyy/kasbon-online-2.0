@@ -11,16 +11,19 @@ import {
     CheckCircle2,
     UserCheck,
     Hash,
-    Building2
+    Building2,
+    Loader2
 } from 'lucide-react';
+import Swal from 'sweetalert2';
 import { useApp, type KasbonItem } from './context/AppContext';
+import { supabase } from './supabaseClient';
 
 interface NewRequestModalProps {
     onClose: () => void;
 }
 
 const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
-    const { addRequest, currentUser, requests, getDynamicApprovalPath } = useApp();
+    const { addRequest, currentUser, getDynamicApprovalPath } = useApp();
     const [step, setStep] = useState(1);
     const [formData, setFormData] = useState({
         dateNeeded: '',
@@ -34,13 +37,8 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
         { description: '', amount: 0 }
     ]);
     const [attachments, setAttachments] = useState<File[]>([]);
+    const [isSubmitting, setIsSubmitting] = useState(false);
 
-    // Department Slot Logic
-    const deptActiveRequests = requests.filter(r => r.department === currentUser.dept && !['SETTLED', 'REVOKED', 'REJECTED'].includes(r.status));
-    const isSlotFull = deptActiveRequests.length >= 2; // Default 2 safely as per Cost Center standard
-
-    const activeRequests = requests.filter(r => r.requestor === currentUser.name && !['SETTLED', 'REVOKED', 'REJECTED'].includes(r.status));
-    const nextSlot = activeRequests.length + 1;
     const totalAmount = items.reduce((acc, item) => acc + (item.amount || 0), 0);
 
     const handleAddItem = () => {
@@ -67,22 +65,93 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
         setAttachments(attachments.filter((_, i) => i !== index));
     };
 
-    const handleSubmit = (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        addRequest({
-            requestor: currentUser.name,
-            department: currentUser.dept,
-            amount: totalAmount,
-            purpose: items[0]?.description || 'Multiple Items',
-            date: new Date().toISOString().split('T')[0],
-            dateNeeded: formData.dateNeeded,
-            bankName: formData.bankName,
-            bankAccount: formData.bankAccount,
-            items: items.map((it, idx) => ({ ...it, id: idx.toString() })),
-            type: isSlotFull ? 'OVER_SLOT' : 'REGULAR',
-            slotJustification: isSlotFull ? formData.slotJustification : undefined
-        });
-        onClose();
+
+        // Safety: only allow submit on the last step
+        if (step !== 4) {
+            setStep(step + 1);
+            return;
+        }
+
+        if (totalAmount <= 0) {
+            Swal.fire({
+                icon: 'error',
+                title: 'Data Tidak Valid',
+                text: 'Total pengajuan kasbon tidak boleh Rp. 0',
+                confirmButtonColor: '#796cf2'
+            });
+            return;
+        }
+
+        setIsSubmitting(true);
+        setIsSubmitting(true);
+        try {
+            // Upload files to Supabase Storage
+            const uploadedUrls: string[] = [];
+            for (const file of attachments) {
+                const fileName = `${Date.now()}-${file.name.replace(/\s+/g, '_')}`;
+                const { error: uploadError } = await supabase.storage
+                    .from('attachments')
+                    .upload(fileName, file);
+
+                if (uploadError) {
+                    console.error('Upload error:', uploadError);
+                    Swal.fire({
+                        icon: 'error',
+                        title: 'Upload Gagal',
+                        text: `Gagal mengunggah file ${file.name}. Pastikan Bucket 'attachments' sudah dibuat di Supabase dan diset Public.`,
+                        confirmButtonColor: '#796cf2'
+                    });
+                    setIsSubmitting(false);
+                    return; // Stop if upload fails
+                }
+
+                const { data: { publicUrl } } = supabase.storage
+                    .from('attachments')
+                    .getPublicUrl(fileName);
+
+                uploadedUrls.push(`${file.name}|${publicUrl}`);
+            }
+
+            const justificationText = uploadedUrls.length > 0
+                ? uploadedUrls.join(';')
+                : 'Catatan: Tidak ada lampiran tambahan.';
+
+            await addRequest({
+                requestor: currentUser.name,
+                department: currentUser.dept,
+                amount: totalAmount,
+                purpose: items[0]?.description || 'Multiple Items',
+                date: new Date().toISOString().split('T')[0],
+                dateNeeded: formData.dateNeeded,
+                bankName: formData.bankName,
+                bankAccount: formData.bankAccount,
+                items: items.map((it, idx) => ({ ...it, id: idx.toString() })),
+                type: 'REGULAR',
+                slotJustification: justificationText
+            });
+
+            await Swal.fire({
+                icon: 'success',
+                title: 'Berhasil Diajukan!',
+                text: 'Kasbon Anda telah terbuat dan sedang menunggu approval.',
+                confirmButtonColor: '#796cf2',
+                timer: 3000
+            });
+
+            onClose();
+        } catch (error) {
+            console.error('Submit error:', error);
+            Swal.fire({
+                icon: 'error',
+                title: 'Gagal Mengirim',
+                text: 'Terjadi kesalahan saat menyimpan data. Pastikan server aktif.',
+                confirmButtonColor: '#796cf2'
+            });
+        } finally {
+            setIsSubmitting(false);
+        }
     };
 
     const steps = [
@@ -109,31 +178,17 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
                 </header>
 
                 <div className="modal-body-modern">
-                    <form onSubmit={handleSubmit}>
+                    <form
+                        onSubmit={handleSubmit}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' && step < 4) {
+                                e.preventDefault();
+                                setStep(step + 1);
+                            }
+                        }}
+                    >
                         {step === 1 && (
                             <div className="form-step-container">
-                                {isSlotFull && (
-                                    <div className="warning-banner-modern warning" style={{ marginBottom: '32px' }}>
-                                        <AlertTriangle size={20} color="#f59e0b" />
-                                        <div className="warning-text">
-                                            <strong style={{ color: '#d97706' }}>Slot Departemen Terpakai Semua</strong>
-                                            <p>Anda tetap bisa mengajukan, namun ini dianggap sebagai <strong>Pengecualian (Nambah Slot)</strong>.</p>
-                                        </div>
-                                    </div>
-                                )}
-
-                                {isSlotFull && (
-                                    <div className="form-group-modern animate-fade-in" style={{ marginBottom: '24px' }}>
-                                        <label style={{ color: '#ef4444' }}>Justifikasi Penambahan Slot (Wajib) <span className="req">*</span></label>
-                                        <textarea
-                                            placeholder="Jelaskan alasan kenapa Anda butuh kasbon tambahan saat slot masih penuh..."
-                                            value={formData.slotJustification}
-                                            onChange={e => setFormData({ ...formData, slotJustification: e.target.value })}
-                                            className="slot-justification-area"
-                                            required
-                                        ></textarea>
-                                    </div>
-                                )}
                                 <div className="form-title-group">
                                     <h2>Ajukan Kasbon</h2>
                                     <p>STEP 1: INFORMASI DASAR</p>
@@ -203,7 +258,7 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
                                                     type="text"
                                                     placeholder="Isikan No Rekening"
                                                     value={formData.bankAccount}
-                                                    onChange={e => setFormData({ ...formData, bankAccount: e.target.value })}
+                                                    onChange={e => setFormData({ ...formData, bankAccount: e.target.value.replace(/\D/g, '') })}
                                                     required
                                                 />
                                             </div>
@@ -260,14 +315,13 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
                                     <strong>{totalAmount.toLocaleString()}</strong>
                                 </div>
 
-                                {/* Live Approval Preview - Like in the user's old system */}
                                 <div className="live-approval-preview animate-fade-in">
                                     <div className="preview-label">
-                                        <UserCheck size={16} /> Estimasi Alur Persetujuan (Auto-detect)
+                                        <UserCheck size={16} /> Alur Persetujuan (Auto-detect)
                                     </div>
                                     <div className="preview-chain">
                                         {(() => {
-                                            const allSteps = getDynamicApprovalPath(totalAmount, isSlotFull);
+                                            const allSteps = getDynamicApprovalPath(totalAmount, false);
                                             const approvalSteps = allSteps.filter(s => s.role !== 'Finance');
                                             const financeStep = allSteps.find(s => s.role === 'Finance');
 
@@ -358,15 +412,39 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
                                 <div className="review-summary-modern">
                                     <div className="summary-section">
                                         <h4>Ringkasan Kasbon</h4>
-                                        <div className="summary-row-item"><span>Total Pengajuan:</span> <strong>Rp {totalAmount.toLocaleString()}</strong></div>
-                                        <div className="summary-row-item"><span>Lampiran:</span> <strong>{attachments.length} File</strong></div>
-                                        <div className="summary-row-item"><span>Slot Departemen:</span> <strong>{nextSlot} / 2</strong> {nextSlot > 2 && <span className="slot-warning">(Slot 3 Required)</span>}</div>
+                                        <div className="summary-items-list">
+                                            {items.map((it, idx) => (
+                                                <div key={idx} className="summary-item-row">
+                                                    <span className="summary-desc">{it.description}</span>
+                                                    <span className="summary-amt">Rp {it.amount.toLocaleString()}</span>
+                                                </div>
+                                            ))}
+                                            <div className="summary-total-row">
+                                                <span>Total Pengajuan</span>
+                                                <strong>Rp {totalAmount.toLocaleString()}</strong>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="summary-section">
+                                        <h4>Dokumen Lampiran</h4>
+                                        {attachments.length > 0 ? (
+                                            <div className="summary-files-list">
+                                                {attachments.map((file, idx) => (
+                                                    <div key={idx} className="summary-file-badge">
+                                                        📄 {file.name}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        ) : (
+                                            <span style={{ color: '#94a3b8', fontSize: '0.85rem', fontStyle: 'italic' }}>Tidak ada lampiran</span>
+                                        )}
                                     </div>
 
                                     <div className="approval-timeline-preview">
-                                        <h4>Approval Chain</h4>
+                                        <h4>Alur Persetujuan</h4>
                                         <div className="timeline-items-preview">
-                                            {getDynamicApprovalPath(totalAmount, isSlotFull).map((path, idx, arr) => (
+                                            {getDynamicApprovalPath(totalAmount, false).map((path, idx, arr) => (
                                                 <React.Fragment key={idx}>
                                                     <div className="t-item active">
                                                         <div className="t-dot">{path.stepOrder}</div>
@@ -380,7 +458,6 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
                                             ))}
                                         </div>
                                     </div>
-                                    <p className="estimation-text">Estimasi Approval: 1–2 hari kerja (berdasarkan histori aplikasi)</p>
                                 </div>
                             </div>
                         )}
@@ -395,15 +472,21 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
                             {step < 4 ? (
                                 <button
                                     type="button"
-                                    className={`btn-next-modern ${isSlotFull && step === 1 ? 'btn-over-slot' : ''}`}
-                                    onClick={() => setStep(step + 1)}
-                                    disabled={step === 1 && isSlotFull && !formData.slotJustification.trim()}
+                                    className="btn-next-modern"
+                                    onClick={(e) => {
+                                        e.preventDefault();
+                                        setStep(step + 1);
+                                    }}
                                 >
-                                    {isSlotFull && step === 1 ? 'Minta Slot & Lanjut' : 'Lanjut'} <ChevronRight size={18} />
+                                    Lanjut <ChevronRight size={18} />
                                 </button>
                             ) : (
-                                <button type="submit" className="btn-submit-modern">
-                                    Submit Permintaan
+                                <button type="submit" className="btn-submit-modern" disabled={isSubmitting}>
+                                    {isSubmitting ? (
+                                        <><Loader2 size={18} className="animate-spin" /> Mengirim...</>
+                                    ) : (
+                                        'Submit Permintaan'
+                                    )}
                                 </button>
                             )}
                         </footer>
@@ -412,148 +495,139 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
             </div>
 
             <style>{`
-        .modal-overlay-modern {
-          position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(8px);
-          display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 20px;
-        }
-        .modal-card-modern {
-          background: white; width: 100%; max-width: 800px; border-radius: 24px;
-          display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
-        }
-
-        .modal-header-modern { padding: 32px 40px; border-bottom: 1px solid #f1f5f9; display: flex; align-items: center; justify-content: space-between; }
-        .stepper { display: flex; align-items: center; gap: 12px; }
-        .step-item { display: flex; align-items: center; gap: 8px; color: #94a3b8; font-size: 0.9rem; font-weight: 600; }
-        .step-item.active { color: #796cf2; }
-        .step-circle { 
-          width: 24px; height: 24px; border-radius: 50%; border: 2px solid currentColor;
-          display: flex; align-items: center; justify-content: center; font-size: 0.75rem;
-        }
-        .step-line { width: 40px; height: 2px; background: #f1f5f9; }
-        .step-item.active .step-line { background: #dcfce7; }
-        .modal-close { background: #f1f5f9; border: none; padding: 8px; border-radius: 50%; cursor: pointer; color: #64748b; }
-
-        .modal-body-modern { padding: 40px; max-height: 70vh; overflow-y: auto; }
-        .form-step-container { display: flex; flex-direction: column; gap: 24px; }
-        .form-title-group h2 { font-size: 1.5rem; font-weight: 800; color: #1e293b; margin-bottom: 4px; }
-        .form-title-group p { font-size: 0.8rem; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
-
-        .form-group-modern label { display: block; font-size: 0.85rem; font-weight: 700; color: #64748b; margin-bottom: 8px; }
-        .form-group-modern input, .form-group-modern select {
-          width: 100%; padding: 12px 16px; border-radius: 12px; border: 1px solid #e2e8f0;
-          font-size: 1rem; color: #1e293b; transition: all 0.2s;
-        }
-        .form-group-modern input:focus { border-color: #796cf2; box-shadow: 0 0 0 4px rgba(121, 108, 242, 0.1); outline: none; }
-        .form-group-modern input:disabled { background: #f8fafc; color: #94a3b8; cursor: not-allowed; }
-
-        .input-with-icon { position: relative; display: flex; align-items: center; }
-        .input-with-icon svg { position: absolute; left: 14px; }
-        .input-with-icon input, .input-with-icon select { padding-left: 44px; }
-
-        .warning-banner-modern { background: #fffbeb; border: 1px solid #fef3c7; border-radius: 16px; padding: 16px; display: flex; gap: 12px; }
-        .warning-text strong { display: block; font-size: 0.9rem; color: #92400e; }
-        .warning-text p { font-size: 0.8rem; color: #b45309; margin-top: 2px; }
-
-        .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-
-        .items-container-modern { display: flex; flex-direction: column; gap: 12px; }
-        .item-row-modern { display: flex; gap: 12px; align-items: flex-end; }
-        .amount-input-wrapper { position: relative; display: flex; align-items: center; }
-        .amount-input-wrapper span { position: absolute; left: 14px; font-weight: 700; color: #64748b; }
-        .amount-input-wrapper input { padding-left: 44px; text-align: right; font-weight: 700; }
-
-        .btn-remove-item { background: #fee2e2; color: #ef4444; border: none; padding: 12px; border-radius: 12px; cursor: pointer; transition: all 0.2s; }
-        .btn-remove-item:hover { background: #fecaca; }
-
-        .btn-add-item-modern {
-          background: white; border: 2px dashed #e2e8f0; border-radius: 12px; padding: 14px;
-          display: flex; align-items: center; justify-content: center; gap: 8px;
-          color: #64748b; font-weight: 700; cursor: pointer; transition: all 0.2s;
-        }
-        .btn-add-item-modern:hover { border-color: #796cf2; color: #796cf2; background: #f0fdf4; }
-
-        .total-bar-modern {
-          background: #0f172a; border-radius: 16px; padding: 20px 24px; margin-top: 12px;
-          display: flex; justify-content: space-between; align-items: center; color: white;
-        }
-        .total-bar-modern span { font-size: 0.9rem; font-weight: 600; color: #94a3b8; }
-        .total-bar-modern strong { font-size: 1.5rem; font-weight: 800; color: #796cf2; }
-
-        .live-approval-preview { margin-top: 32px; background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 16px; padding: 20px; }
-        .preview-label { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
-        .preview-chain { display: flex; flex-direction: column; gap: 10px; }
-        .preview-section-label { font-size: 0.7rem; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
-        .preview-step { display: grid; grid-template-columns: 140px 1fr; font-size: 0.85rem; align-items: center; padding-bottom: 8px; border-bottom: 1px solid #f1f5f9; }
-        .preview-step:last-child { border-bottom: none; }
-        .step-role { font-weight: 700; color: #475569; }
-        .step-name { color: #796cf2; font-weight: 600; text-align: right; }
-
-        .preview-divider { display: flex; align-items: center; gap: 12px; margin: 12px 0 8px; }
-        .divider-line { flex: 1; height: 1px; background: repeating-linear-gradient(90deg, #cbd5e1 0px, #cbd5e1 4px, transparent 4px, transparent 8px); }
-        .divider-text { font-size: 0.65rem; font-weight: 800; color: #796cf2; text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap; }
-
-        .finance-step { background: #fefce8; border: 1px solid #fde68a; border-radius: 8px; padding: 10px 12px !important; }
-        .finance-step .step-role { color: #92400e; }
-        .finance-step .step-name { color: #b45309; font-weight: 700; }
-
-        .finance-note { font-size: 0.72rem; color: #92400e; font-weight: 500; margin: 6px 0 0; font-style: italic; padding-left: 4px; }
-
-        .upload-modern-area { 
-          border: 2px dashed #e5e7eb; border-radius: 20px; padding: 60px; 
-          text-align: center; background: #fcfdfe; transition: all 0.2s;
-          position: relative;
-        }
-        .upload-box-modern h4 { font-size: 1.1rem; color: #111827; margin: 16px 0 8px; }
-        .upload-box-modern p { font-size: 0.95rem; color: #6b7280; margin-bottom: 4px; }
-        .upload-box-modern span { font-size: 0.8rem; color: #9ca3af; }
-        .file-hidden { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
-
-        .file-preview-list { margin-top: 24px; display: flex; flex-direction: column; gap: 12px; }
-        .file-item-preview { 
-          display: flex; justify-content: space-between; align-items: center; 
-          padding: 12px 16px; background: #f9fafb; border-radius: 12px; border: 1px solid #e5e7eb;
-        }
-        .file-info-flex { display: flex; gap: 12px; align-items: center; }
-        .file-icon-bg { background: #e5e7eb; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 8px; font-size: 0.8rem; }
-        .file-text-meta { display: flex; flex-direction: column; }
-        .file-name { font-size: 0.85rem; font-weight: 600; color: #374151; }
-        .file-size { font-size: 0.75rem; color: #9ca3af; }
-        .btn-remove-file { background: none; border: none; font-size: 1.2rem; color: #9ca3af; cursor: pointer; padding: 4px; }
-        .btn-remove-file:hover { color: #ef4444; }
-
-        .review-summary-modern { display: flex; flex-direction: column; gap: 32px; }
-        .summary-section h4, .approval-timeline-preview h4 { font-size: 0.9rem; font-weight: 800; color: #9ca3af; text-transform: uppercase; margin-bottom: 16px; }
-        .summary-row-item { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #f3f4f6; }
-        .summary-row-item span { color: #64748b; font-weight: 600; }
-        .summary-row-item strong { color: #1e293b; font-weight: 800; }
-        .slot-warning { color: #ef4444; font-size: 0.7rem; font-weight: 800; text-transform: uppercase; background: #fee2e2; padding: 2px 6px; border-radius: 4px; }
-
-        .timeline-items-preview { display: flex; flex-direction: column; gap: 0; }
-        .t-item { display: flex; align-items: center; gap: 16px; }
-        .t-dot { 
-          width: 32px; height: 32px; border-radius: 50%; background: #f1f5f9; color: #64748b;
-          display: flex; align-items: center; justify-content: center; font-size: 0.85rem; font-weight: 800;
-        }
-        .t-item.active .t-dot { background: #dcfce7; color: #796cf2; }
-        .t-info { display: flex; flex-direction: column; }
-        .t-role { font-size: 0.75rem; font-weight: 800; color: #94a3b8; text-transform: uppercase; }
-        .t-name { font-size: 0.95rem; font-weight: 700; color: #1e293b; }
-        .t-line { width: 2px; height: 24px; background: #f1f5f9; margin-left: 15px; }
-
-        .warning-banner-modern { display: flex; gap: 16px; background: #fffbeb; border: 1px solid #fef3c7; padding: 16px; border-radius: 16px; margin-bottom: 24px; }
-        .warning-banner-modern.fatal { background: #fef2f2; border: 1px solid #fee2e2; }
-        .warning-text strong { display: block; font-size: 0.95rem; color: #92400e; margin-bottom: 4px; }
-        .warning-text p { font-size: 0.85rem; color: #b45309; line-height: 1.4; }
-        .slot-users-list { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
-        .slot-user-item { font-size: 0.8rem; color: #475569; display: flex; align-items: center; gap: 8px; }
-        .slot-user-item .dot { width: 6px; height: 6px; background: #ef4444; border-radius: 50%; }
-        .slot-user-item strong { color: #1e293b; }
-
-        .form-footer-modern { padding: 32px 40px; border-top: 1px solid #f1f5f9; display: flex; align-items: center; }
-        .btn-back-modern { background: transparent; border: 1px solid #e2e8f0; color: #64748b; font-weight: 700; padding: 12px 24px; border-radius: 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; }
-        .btn-next-modern { background: #796cf2; color: white; border: none; font-weight: 800; padding: 12px 32px; border-radius: 12px; cursor: pointer; display: flex; align-items: center; gap: 10px; box-shadow: 0 10px 15px -3px rgba(121, 108, 242, 0.2); }
-        .btn-submit-modern { background: #0f172a; color: white; border: none; font-weight: 800; padding: 12px 32px; border-radius: 12px; cursor: pointer; box-shadow: 0 10px 15px -3px rgba(15, 23, 42, 0.2); width: 100%; max-width: 250px; }
-      `}</style>
+                /* ... keep existing styles ... */
+                .modal-overlay-modern {
+                  position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(8px);
+                  display: flex; align-items: center; justify-content: center; z-index: 1000; padding: 20px;
+                }
+                .modal-card-modern {
+                  background: white; width: 100%; max-width: 800px; border-radius: 24px;
+                  display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
+                }
+                .modal-header-modern { padding: 32px 40px; border-bottom: 1px solid #f1f5f9; display: flex; align-items: center; justify-content: space-between; }
+                .stepper { display: flex; align-items: center; gap: 12px; }
+                .step-item { display: flex; align-items: center; gap: 8px; color: #94a3b8; font-size: 0.9rem; font-weight: 600; }
+                .step-item.active { color: #796cf2; }
+                .step-circle { 
+                  width: 24px; height: 24px; border-radius: 50%; border: 2px solid currentColor;
+                  display: flex; align-items: center; justify-content: center; font-size: 0.75rem;
+                }
+                .step-line { width: 40px; height: 2px; background: #f1f5f9; }
+                .step-item.active .step-line { background: #dcfce7; }
+                .modal-close { background: #f1f5f9; border: none; padding: 8px; border-radius: 50%; cursor: pointer; color: #64748b; }
+                .modal-body-modern { padding: 40px; max-height: 70vh; overflow-y: auto; }
+                .form-step-container { display: flex; flex-direction: column; gap: 24px; }
+                .form-title-group h2 { font-size: 1.5rem; font-weight: 800; color: #1e293b; margin-bottom: 4px; }
+                .form-title-group p { font-size: 0.8rem; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; }
+                .form-group-modern label { display: block; font-size: 0.85rem; font-weight: 700; color: #64748b; margin-bottom: 8px; }
+                .form-group-modern input, .form-group-modern select {
+                  width: 100%; padding: 12px 16px; border-radius: 12px; border: 1px solid #e2e8f0;
+                  font-size: 1rem; color: #1e293b; transition: all 0.2s;
+                }
+                .form-group-modern input:focus { border-color: #796cf2; box-shadow: 0 0 0 4px rgba(121, 108, 242, 0.1); outline: none; }
+                .form-group-modern input:disabled { background: #f8fafc; color: #94a3b8; cursor: not-allowed; }
+                .input-with-icon { position: relative; display: flex; align-items: center; }
+                .input-with-icon svg { position: absolute; left: 14px; }
+                .input-with-icon input, .input-with-icon select { padding-left: 44px; }
+                .warning-banner-modern { background: #fffbeb; border: 1px solid #fef3c7; border-radius: 16px; padding: 16px; display: flex; gap: 12px; }
+                .warning-text strong { display: block; font-size: 0.9rem; color: #92400e; }
+                .warning-text p { font-size: 0.8rem; color: #b45309; margin-top: 2px; }
+                .form-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+                .items-container-modern { display: flex; flex-direction: column; gap: 12px; }
+                .item-row-modern { display: flex; gap: 12px; align-items: flex-end; }
+                .amount-input-wrapper { position: relative; display: flex; align-items: center; }
+                .amount-input-wrapper span { position: absolute; left: 14px; font-weight: 700; color: #64748b; }
+                .amount-input-wrapper input { padding-left: 44px; text-align: right; font-weight: 700; }
+                .btn-remove-item { background: #fee2e2; color: #ef4444; border: none; padding: 12px; border-radius: 12px; cursor: pointer; transition: all 0.2s; }
+                .btn-remove-item:hover { background: #fecaca; }
+                .btn-add-item-modern {
+                  background: white; border: 2px dashed #e2e8f0; border-radius: 12px; padding: 14px;
+                  display: flex; align-items: center; justify-content: center; gap: 8px;
+                  color: #64748b; font-weight: 700; cursor: pointer; transition: all 0.2s;
+                }
+                .btn-add-item-modern:hover { border-color: #796cf2; color: #796cf2; background: #f0fdf4; }
+                .total-bar-modern {
+                  background: #0f172a; border-radius: 16px; padding: 20px 24px; margin-top: 12px;
+                  display: flex; justify-content: space-between; align-items: center; color: white;
+                }
+                .total-bar-modern span { font-size: 0.9rem; font-weight: 600; color: #94a3b8; }
+                .total-bar-modern strong { font-size: 1.5rem; font-weight: 800; color: #796cf2; }
+                .live-approval-preview { margin-top: 32px; background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 16px; padding: 20px; }
+                .preview-label { font-size: 0.75rem; font-weight: 800; color: #64748b; text-transform: uppercase; margin-bottom: 16px; display: flex; align-items: center; gap: 8px; }
+                .preview-chain { display: flex; flex-direction: column; gap: 10px; }
+                .preview-section-label { font-size: 0.7rem; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
+                .preview-step { display: grid; grid-template-columns: 140px 1fr; font-size: 0.85rem; align-items: center; padding-bottom: 8px; border-bottom: 1px solid #f1f5f9; }
+                .preview-step:last-child { border-bottom: none; }
+                .step-role { font-weight: 700; color: #475569; }
+                .step-name { color: #796cf2; font-weight: 600; text-align: right; }
+                .preview-divider { display: flex; align-items: center; gap: 12px; margin: 12px 0 8px; }
+                .divider-line { flex: 1; height: 1px; background: repeating-linear-gradient(90deg, #cbd5e1 0px, #cbd5e1 4px, transparent 4px, transparent 8px); }
+                .divider-text { font-size: 0.65rem; font-weight: 800; color: #796cf2; text-transform: uppercase; letter-spacing: 0.08em; white-space: nowrap; }
+                .finance-step { background: #fefce8; border: 1px solid #fde68a; border-radius: 8px; padding: 10px 12px !important; }
+                .finance-step .step-role { color: #92400e; }
+                .finance-step .step-name { color: #b45309; font-weight: 700; }
+                .finance-note { font-size: 0.72rem; color: #92400e; font-weight: 500; margin: 6px 0 0; font-style: italic; padding-left: 4px; }
+                .upload-modern-area { 
+                  border: 2px dashed #e5e7eb; border-radius: 20px; padding: 60px; 
+                  text-align: center; background: #fcfdfe; transition: all 0.2s;
+                  position: relative;
+                }
+                .upload-box-modern h4 { font-size: 1.1rem; color: #111827; margin: 16px 0 8px; }
+                .upload-box-modern p { font-size: 0.95rem; color: #6b7280; margin-bottom: 4px; }
+                .upload-box-modern span { font-size: 0.8rem; color: #9ca3af; }
+                .file-hidden { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+                .file-preview-list { margin-top: 24px; display: flex; flex-direction: column; gap: 12px; }
+                .file-item-preview { 
+                  display: flex; justify-content: space-between; align-items: center; 
+                  padding: 12px 16px; background: #f9fafb; border-radius: 12px; border: 1px solid #e5e7eb;
+                }
+                .file-info-flex { display: flex; gap: 12px; align-items: center; }
+                .file-icon-bg { background: #e5e7eb; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 8px; font-size: 0.8rem; }
+                .file-text-meta { display: flex; flex-direction: column; }
+                .file-name { font-size: 0.85rem; font-weight: 600; color: #374151; }
+                .file-size { font-size: 0.75rem; color: #9ca3af; }
+                .btn-remove-file { background: none; border: none; font-size: 1.2rem; color: #9ca3af; cursor: pointer; padding: 4px; }
+                .btn-remove-file:hover { color: #ef4444; }
+                .review-summary-modern { display: flex; flex-direction: column; gap: 32px; }
+                .summary-section h4, .approval-timeline-preview h4 { font-size: 0.9rem; font-weight: 800; color: #9ca3af; text-transform: uppercase; margin-bottom: 16px; }
+                .summary-items-list { background: #f8fafc; border-radius: 12px; padding: 16px; display: flex; flex-direction: column; gap: 8px; }
+                .summary-item-row { display: flex; justify-content: space-between; font-size: 0.9rem; color: #475569; padding-bottom: 8px; border-bottom: 1px dashed #e2e8f0; }
+                .summary-item-row:last-of-type { border-bottom: none; }
+                .summary-total-row { display: flex; justify-content: space-between; margin-top: 8px; padding-top: 8px; border-top: 2px solid #e2e8f0; color: #1e293b; font-weight: 800; font-size: 1rem; }
+                .summary-files-list { display: flex; flex-wrap: wrap; gap: 8px; }
+                .summary-file-badge { background: #f1f5f9; color: #475569; padding: 6px 12px; border-radius: 8px; font-size: 0.8rem; font-weight: 600; border: 1px solid #e2e8f0; }
+                .summary-row-item { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #f3f4f6; }
+                .summary-row-item span { color: #64748b; font-weight: 600; }
+                .summary-row-item strong { color: #1e293b; font-weight: 800; }
+                .slot-warning { color: #ef4444; font-size: 0.7rem; font-weight: 800; text-transform: uppercase; background: #fee2e2; padding: 2px 6px; border-radius: 4px; }
+                .timeline-items-preview { display: flex; flex-direction: column; gap: 0; }
+                .t-item { display: flex; align-items: center; gap: 16px; }
+                .t-dot { 
+                  width: 32px; height: 32px; border-radius: 50%; background: #f1f5f9; color: #64748b;
+                  display: flex; align-items: center; justify-content: center; font-size: 0.85rem; font-weight: 800;
+                }
+                .t-item.active .t-dot { background: #dcfce7; color: #796cf2; }
+                .t-info { display: flex; flex-direction: column; }
+                .t-role { font-size: 0.75rem; font-weight: 800; color: #94a3b8; text-transform: uppercase; }
+                .t-name { font-size: 0.95rem; font-weight: 700; color: #1e293b; }
+                .t-line { width: 2px; height: 24px; background: #f1f5f9; margin-left: 15px; }
+                .warning-banner-modern { display: flex; gap: 16px; background: #fffbeb; border: 1px solid #fef3c7; padding: 16px; border-radius: 16px; margin-bottom: 24px; }
+                .warning-banner-modern.fatal { background: #fef2f2; border: 1px solid #fee2e2; }
+                .warning-text strong { display: block; font-size: 0.95rem; color: #92400e; margin-bottom: 4px; }
+                .warning-text p { font-size: 0.85rem; color: #b45309; line-height: 1.4; }
+                .btn-back-modern { background: white; border: 1px solid #e2e8f0; color: #64748b; font-weight: 700; padding: 12px 24px; border-radius: 12px; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: all 0.2s; }
+                .btn-back-modern:hover { background: #f8fafc; border-color: #cbd5e1; }
+                .btn-next-modern { background: #796cf2; color: white; border: none; font-weight: 800; padding: 12px 32px; border-radius: 12px; cursor: pointer; display: flex; align-items: center; gap: 10px; box-shadow: 0 10px 15px -3px rgba(121, 108, 242, 0.2); transition: all 0.2s; }
+                .btn-next-modern:hover { background: #6355d9; transform: translateY(-1px); }
+                .btn-next-modern.btn-over-slot { background: #92400e; box-shadow: 0 10px 15px -3px rgba(146, 64, 14, 0.2); }
+                .btn-submit-modern { background: #0f172a; color: white; border: none; font-weight: 800; padding: 12px 32px; border-radius: 12px; cursor: pointer; box-shadow: 0 10px 15px -3px rgba(15, 23, 42, 0.2); transition: all 0.2s; }
+                .btn-submit-modern:hover { background: #1e293b; transform: translateY(-1px); }
+                .btn-submit-modern:disabled { opacity: 0.7; cursor: not-allowed; transform: none; }
+                .form-footer-modern { 
+                  padding: 24px 40px; background: #f8fafc; border-top: 1px solid #f1f5f9; 
+                  display: flex; align-items: center; gap: 16px;
+                }
+            `}</style>
         </div>
     );
 };

@@ -168,6 +168,16 @@ app.post('/api/auth/login', async (req, res) => {
 
         const role = roleData?.role || (emp_no === '2310.2639' ? 'ADMIN' : 'USER');
 
+        const rawCC = user.cost_center || '';
+        let cleanCC = 'UNKNOWN-CC';
+        const ccMatch = rawCC.trim().match(/^(?:\d{6,7}-)?([A-Z0-9]+-[A-Z0-9]+)\s+(.+)$/i);
+        if (ccMatch) {
+            cleanCC = ccMatch[1];
+        } else if (rawCC.trim().match(/^[A-Z]{2,}-[A-Z]+$/i)) {
+            // Case for HO-MOLOGIZ style without prefix
+            cleanCC = rawCC.trim();
+        }
+
         res.json({
             status: 'success',
             data: {
@@ -176,7 +186,7 @@ app.post('/api/auth/login', async (req, res) => {
                 email: user.email,
                 position: user.employee_position || user.job_title,
                 department: user.organization_unit,
-                cost_center: user.cost_center, // Added cost_center here
+                cost_center: cleanCC,
                 role: role,
                 direct_supervisorid: user.direct_supervisorid,
                 direct_supervisor: user.direct_supervisor,
@@ -414,14 +424,23 @@ app.get('/api/kasbons', async (req, res) => {
 app.post('/api/kasbons', async (req, res) => {
     try {
         const { requestor_emp_no, requestor_name, department_name, cost_center_code,
-            amount, date_needed, bank_name, bank_account, purpose, items, approvalPath, slot_used, type
+            amount, date_needed, bank_name, bank_account, purpose, items, approvalPath, slot_used, type, slot_justification
         } = req.body;
 
-        // Auto Generate ID: REQ-YYYYMM-XXX
+        console.log('Incoming Kasbon Request:', { id: requestor_name, slot_justification }); // Add logging
+
+        // Auto Generate ID: YY.SEQUENCE (e.g., 26.00001)
         const today = new Date();
-        const yyyymm = today.toISOString().slice(0, 7).replace('-', '');
-        const randomNum = Math.floor(Math.random() * 1000).toString().padStart(3, '0');
-        const kasbon_id = `REQ-${yyyymm}-${randomNum}`; // Simple generate logic for now
+        const yy = today.getFullYear().toString().slice(-2);
+
+        // Fetch current count for this year for sequence
+        const { count } = await supabase
+            .from('kasbon_requests')
+            .select('*', { count: 'exact', head: true })
+            .filter('id', 'ilike', `${yy}.%`);
+
+        const sequence = ((count || 0) + 1).toString().padStart(5, '0');
+        const kasbon_id = `${yy}.${sequence}`;
 
         // 1. Insert Request
         const { data: kasbon, error: err1 } = await supabase.from('kasbon_requests').insert({
@@ -438,10 +457,12 @@ app.post('/api/kasbons', async (req, res) => {
             slot_used: slot_used || 1,
             type: type || 'REGULAR',
             status: 'PENDING',
-            current_step_index: 0
+            current_step_index: 1, // Start at 1 because 0 (Requestor) is auto-approved
+            slot_justification: slot_justification
         }).select().single();
 
         if (err1) throw err1;
+        console.log('Saved Kasbon to DB:', kasbon_id);
 
         // 2. Insert Items
         if (items && items.length > 0) {
@@ -457,12 +478,14 @@ app.post('/api/kasbons', async (req, res) => {
 
         // 3. Insert Approvals Path
         if (approvalPath && approvalPath.length > 0) {
-            const approvalsData = approvalPath.map(app => ({
+            const approvalsData = approvalPath.map((app, idx) => ({
                 kasbon_id,
                 approver_name: app.approverName,
                 role_description: app.role,
                 step_order: app.stepOrder,
-                status: 'PENDING'
+                // Mark the requestor (usually first step) as APPROVED immediately
+                status: idx === 0 ? 'APPROVED' : 'PENDING',
+                approved_at: idx === 0 ? new Date().toISOString() : null
             }));
             const { error: err3 } = await supabase.from('kasbon_approvals').insert(approvalsData);
             if (err3) throw err3;
@@ -471,6 +494,195 @@ app.post('/api/kasbons', async (req, res) => {
         res.json({ status: 'success', data: kasbon });
     } catch (err) {
         console.error('Create Kasbon Error:', err.message);
+        res.status(500).json({ status: 'error', message: err.message });
+    }
+});
+
+// --- SLOT REQUESTS API ---
+
+// 1. GET ALL SLOT REQUESTS
+app.get('/api/slot-requests', async (req, res) => {
+    try {
+        const { data, error } = await supabase
+            .from('slot_requests')
+            .select(`
+                *,
+                approvals:slot_approvals(*)
+            `)
+            .order('created_at', { ascending: false });
+
+        if (error) throw error;
+        res.json({ status: 'success', data });
+    } catch (err) {
+        console.error('Fetch Slots Error:', err.message);
+        res.status(500).json({ status: 'error', message: err.message });
+    }
+});
+
+// 2. CREATE NEW SLOT REQUEST
+app.post('/api/slot-requests', async (req, res) => {
+    try {
+        const {
+            requestor_emp_no, requestor_name, department_name, cost_center_code,
+            reason, current_slots, requested_slots, approvalPath
+        } = req.body;
+
+        // ID: SLOT.XXX (simple sequence based on total)
+        const { count } = await supabase.from('slot_requests').select('*', { count: 'exact', head: true });
+        const slot_id = `SLOT-${(count + 1).toString().padStart(3, '0')}`;
+
+        // 1. Insert Request
+        const { data: slot, error: err1 } = await supabase.from('slot_requests').insert({
+            id: slot_id,
+            requestor_emp_no,
+            requestor_name,
+            department_name,
+            cost_center_code,
+            reason,
+            current_slots,
+            requested_slots,
+            status: 'PENDING'
+        }).select().single();
+
+        if (err1) throw err1;
+
+        // 2. Insert Approvals
+        if (approvalPath && approvalPath.length > 0) {
+            const approvalsData = approvalPath.map(ap => ({
+                slot_request_id: slot_id,
+                approver_name: ap.approverName,
+                role_description: ap.role,
+                status: ap.status,
+                step_order: ap.stepOrder
+            }));
+            const { error: err2 } = await supabase.from('slot_approvals').insert(approvalsData);
+            if (err2) throw err2;
+        }
+
+        res.json({ status: 'success', data: slot });
+    } catch (err) {
+        console.error('Create Slot Error:', err.message);
+        res.status(500).json({ status: 'error', message: err.message });
+    }
+});
+
+// 3. UPDATE SLOT REQUEST STATUS (APPROVE/REJECT)
+app.put('/api/slot-requests/:id/status', async (req, res) => {
+    const { id } = req.params;
+    const { status, approver_name } = req.body; // status: 'APPROVED' or 'REJECTED'
+
+    try {
+        // 1. Update the request status
+        const { data: slot, error: err1 } = await supabase
+            .from('slot_requests')
+            .update({ status: status })
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (err1) throw err1;
+
+        // 2. Update the approval step (simple single-step for now)
+        const { error: err2 } = await supabase
+            .from('slot_approvals')
+            .update({
+                status: status,
+                approved_at: new Date().toISOString()
+            })
+            .eq('slot_request_id', id)
+            .eq('approver_name', approver_name);
+
+        if (err2) throw err2;
+
+        // 3. If APPROVED, update the department_settings max_slots
+        if (status === 'APPROVED') {
+            const { error: err3 } = await supabase
+                .from('department_settings')
+                .upsert({
+                    cost_center_code: slot.cost_center_code,
+                    name: slot.department_name,
+                    max_slots: slot.requested_slots
+                }, { onConflict: 'cost_center_code' });
+
+            if (err3) throw err3;
+        }
+
+        res.json({ status: 'success', data: slot });
+    } catch (err) {
+        console.error('Update Slot Status Error:', err.message);
+        res.status(500).json({ status: 'error', message: err.message });
+    }
+});
+
+// 5. UPDATE KASBON STATUS (APPROVE/REJECT)
+app.put('/api/kasbons/:id/status', async (req, res) => {
+    const { id } = req.params;
+    const { status, approver_name, remarks } = req.body; // Tambah remarks di sini
+
+    try {
+        // 1. Get current request to know current step
+        const { data: request, error: errFetch } = await supabase
+            .from('kasbon_requests')
+            .select('*, approvals:kasbon_approvals(*)')
+            .eq('id', id)
+            .single();
+
+        if (errFetch) throw errFetch;
+
+        // 2. Find the current pending step
+        const currentApprovals = request.approvals.sort((a, b) => a.step_order - b.step_order);
+        // In simulation, we might not match the name exactly, so we take the first pending step
+        const myStep = currentApprovals.find(a => a.status === 'PENDING');
+
+        if (!myStep) {
+            return res.status(400).json({ status: 'error', message: 'No pending approval step found.' });
+        }
+
+        // 3. Update the specific approval status
+        const { error: errApp } = await supabase
+            .from('kasbon_approvals')
+            .update({
+                status: status,
+                approved_at: new Date().toISOString(),
+                remarks: remarks // Simpen alasannya di kolom remarks
+            })
+            .eq('id', myStep.id);
+
+        if (errApp) throw errApp;
+
+        // 4. Update overall request status
+        let finalStatus = 'PENDING';
+        let nextStepIndex = request.current_step_index;
+
+        if (status === 'REJECTED') {
+            finalStatus = 'REJECTED';
+            // Also mark all other pending steps as SKIPPED/REJECTED if needed, 
+            // but usually setting the main request to REJECTED is enough for the UI.
+        } else {
+            // Check if all steps are approved
+            const remainingPending = currentApprovals.filter(a => a.id !== myStep.id && a.status === 'PENDING');
+            if (remainingPending.length === 0) {
+                finalStatus = 'APPROVED';
+            } else {
+                nextStepIndex += 1;
+            }
+        }
+
+        const { data: updated, error: errUpd } = await supabase
+            .from('kasbon_requests')
+            .update({
+                status: finalStatus,
+                current_step_index: nextStepIndex
+            })
+            .eq('id', id)
+            .select()
+            .single();
+
+        if (errUpd) throw errUpd;
+
+        res.json({ status: 'success', data: updated });
+    } catch (err) {
+        console.error('Update Kasbon Status Error:', err.message);
         res.status(500).json({ status: 'error', message: err.message });
     }
 });

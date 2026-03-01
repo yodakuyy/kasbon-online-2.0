@@ -5,7 +5,8 @@ import {
     FileText,
     MoreVertical,
     CircleDashed,
-    ArrowLeft
+    ArrowLeft,
+    XCircle
 } from 'lucide-react';
 import { type KasbonRequest } from './context/AppContext';
 
@@ -15,6 +16,20 @@ interface StatusTrackerProps {
 }
 
 const StatusTracker: React.FC<StatusTrackerProps> = ({ request, onBack }) => {
+    const formatApprovalDate = (dateStr: string) => {
+        if (!dateStr) return '';
+        try {
+            const date = new Date(dateStr);
+            return date.toLocaleDateString('id-ID', {
+                day: '2-digit',
+                month: 'long',
+                year: 'numeric'
+            }); // Outputs: 01 Maret 2026
+        } catch {
+            return dateStr.split('T')[0]; // Fallback
+        }
+    };
+
     return (
         <div className="status-tracker-page animate-fade-in">
             <header className="tracker-header">
@@ -23,24 +38,35 @@ const StatusTracker: React.FC<StatusTrackerProps> = ({ request, onBack }) => {
                 <button className="btn-icon-more"><MoreVertical size={20} /></button>
             </header>
 
+            {/* ALERT: Rejection Reason */}
+            {request.status === 'REJECTED' && (
+                <div className="rejection-alert animate-shake">
+                    <div className="alert-icon"><XCircle size={24} /></div>
+                    <div className="alert-content">
+                        <h4>Kasbon Ditolak</h4>
+                        <p>{request.approvalPath.find(s => s.status === 'REJECTED')?.remarks || 'Tanpa alasan spesifik.'}</p>
+                    </div>
+                </div>
+            )}
+
             {/* Dynamic Timeline Horizontal */}
             <section className="timeline-section-modern">
                 <div className="timeline-container-modern">
                     {request.approvalPath.map((step, idx) => {
                         const isApproved = step.status === 'APPROVED';
-                        const isCurrent = !isApproved && (idx === 0 || request.approvalPath[idx - 1].status === 'APPROVED');
+                        const isRejected = step.status === 'REJECTED';
+                        const isCurrent = !isApproved && !isRejected && (idx === 0 || request.approvalPath[idx - 1].status === 'APPROVED');
 
                         return (
                             <React.Fragment key={idx}>
                                 {idx > 0 && (
-                                    <div className={`timeline-connector ${isApproved ? 'finished' : (isCurrent ? 'active' : '')}`} />
+                                    <div className={`timeline-connector ${isApproved ? 'finished' : (isRejected ? 'rejected' : (isCurrent ? 'active' : ''))}`} />
                                 )}
-                                <div className={`timeline-step ${isApproved ? 'finished' : (isCurrent ? 'active' : '')}`}>
+                                <div className={`timeline-step ${isApproved ? 'finished' : (isRejected ? 'rejected' : (isCurrent ? 'active' : ''))}`}>
                                     <div className="step-point">
-                                        {isApproved ? <CheckCircle2 size={16} /> : (isCurrent ? <Clock size={16} /> : <CircleDashed size={16} />)}
+                                        {isApproved ? <CheckCircle2 size={16} /> : (isRejected ? <XCircle size={16} /> : (isCurrent ? <Clock size={16} /> : <CircleDashed size={16} />))}
                                     </div>
-                                    <span>{step.role === 'Requestor' ? 'Submitted' : step.role}</span>
-                                    {isCurrent && <div className="step-countdown">1 hari tersisa</div>}
+                                    <span>{step.role === 'Requestor' || step.role === 'Submitted' ? 'Submitted' : step.role}</span>
                                 </div>
                             </React.Fragment>
                         );
@@ -48,22 +74,55 @@ const StatusTracker: React.FC<StatusTrackerProps> = ({ request, onBack }) => {
                 </div>
             </section>
 
-            {/* Detail Kasbon */}
-            <section className="detail-kasbon-card">
-                <h3>Detail Kasbon</h3>
-                <div className="items-table-modern">
-                    {request.items?.map((item, idx) => (
-                        <div key={idx} className="item-row-detail">
-                            <span className="item-desc"><FileText size={16} /> {item.description}</span>
-                            <span className="item-price">Rp {item.amount.toLocaleString()}</span>
+            {/* Detail Kasbon & Lampiran */}
+            <div className="details-grid-modern">
+                <section className="detail-kasbon-card">
+                    <h3>Detail Kasbon</h3>
+                    <div className="items-table-modern">
+                        {request.items?.map((item, idx) => (
+                            <div key={idx} className="item-row-detail">
+                                <span className="item-desc"><FileText size={16} /> {item.description}</span>
+                                <span className="item-price">Rp {item.amount.toLocaleString()}</span>
+                            </div>
+                        ))}
+                        <div className="detail-total-row">
+                            <span>Total</span>
+                            <strong>Rp {request.amount.toLocaleString()}</strong>
                         </div>
-                    ))}
-                    <div className="detail-total-row">
-                        <span>Total</span>
-                        <strong>Rp {request.amount.toLocaleString()}</strong>
                     </div>
-                </div>
-            </section>
+                </section>
+
+                <section className="detail-kasbon-card">
+                    <h3>Dokumen Lampiran</h3>
+                    <div className="attachments-list-modern">
+                        {request.slotJustification ? (
+                            request.slotJustification.split(';').map((part, pIdx) => {
+                                // If it contains name|URL
+                                if (part.includes('|')) {
+                                    const [name, url] = part.split('|');
+                                    return (
+                                        <a href={url} target="_blank" rel="noopener noreferrer" key={pIdx} className="attachment-item link">
+                                            <FileText size={16} />
+                                            <span>{name}</span>
+                                        </a>
+                                    );
+                                }
+                                // Fallback for simple text/notes
+                                return (
+                                    <div key={pIdx} className="attachment-item">
+                                        <FileText size={16} />
+                                        <span>{part}</span>
+                                    </div>
+                                );
+                            })
+                        ) : (
+                            <div className="history-empty" style={{ padding: '0', textAlign: 'left' }}>
+                                Tidak ada lampiran dokumen.
+                            </div>
+                        )}
+                    </div>
+                </section>
+            </div>
 
             {/* Riwayat Persetujuan - Menampilkan Seluruh Hierarki */}
             <section className="approval-history-modern">
@@ -72,20 +131,19 @@ const StatusTracker: React.FC<StatusTrackerProps> = ({ request, onBack }) => {
                     {request.approvalPath.map((step, idx) => (
                         <div key={idx} className="history-item">
                             <span className="history-role">
-                                {step.role === 'Requestor' ? 'Pengajuan kasbon' : step.role}
+                                {step.role.includes('Requestor') || step.role === 'Submitted' ? 'Pengajuan kasbon' : step.role}
                             </span>
                             <span className="history-colon">:</span>
                             <div className="history-info">
-                                <span className="history-name">
-                                    {step.approverName}
-                                    {step.status === 'APPROVED' ? (
-                                        <span className="history-date">
-                                            {step.role === 'Requestor'
-                                                ? ` (${step.approvedAt?.split(',')[0]})`
-                                                : ` (Disetujui, ${step.approvedAt?.split(',')[0]})`}
-                                        </span>
-                                    ) : ''}
-                                </span>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    <span className="history-name">{step.approverName}</span>
+                                    {step.status === 'REJECTED' && <span className="badge-rejected">REJECTED</span>}
+                                </div>
+                                {step.approvedAt && (
+                                    <span className="history-date">
+                                        {formatApprovalDate(step.approvedAt)}
+                                    </span>
+                                )}
                             </div>
                         </div>
                     ))}
@@ -98,6 +156,21 @@ const StatusTracker: React.FC<StatusTrackerProps> = ({ request, onBack }) => {
         .tracker-header { display: flex; align-items: center; gap: 16px; margin-bottom: 8px; }
         .tracker-header h1 { font-size: 1.5rem; font-weight: 800; color: #111827; flex: 1; }
         .btn-icon-back, .btn-icon-more { background: transparent; border: none; padding: 10px; cursor: pointer; color: #6b7280; }
+
+        .rejection-alert {
+          background: #fef2f2; border: 1px solid #fee2e2; border-radius: 16px; padding: 20px 24px;
+          display: flex; align-items: flex-start; gap: 20px; box-shadow: 0 4px 12px rgba(239, 68, 68, 0.08);
+        }
+        .rejection-alert .alert-icon { color: #ef4444; margin-top: 2px; }
+        .rejection-alert .alert-content h4 { font-size: 1rem; font-weight: 800; color: #991b1b; margin-bottom: 4px; }
+        .rejection-alert .alert-content p { font-size: 0.95rem; font-weight: 600; color: #b91c1c; opacity: 0.9; line-height: 1.5; }
+
+        @keyframes shake {
+          0%, 100% { transform: translateX(0); }
+          25% { transform: translateX(-4px); }
+          75% { transform: translateX(4px); }
+        }
+        .animate-shake { animation: shake 0.4s cubic-bezier(.36,.07,.19,.97) both; }
 
         .timeline-section-modern { background: white; border-radius: 20px; padding: 40px; border: 1px solid #f3f4f6; box-shadow: var(--shadow); }
         .timeline-container-modern { display: flex; align-items: center; justify-content: space-between; position: relative; }
@@ -116,15 +189,23 @@ const StatusTracker: React.FC<StatusTrackerProps> = ({ request, onBack }) => {
         .timeline-step.active .step-point { background: #796cf2; color: white; box-shadow: 0 4px 10px rgba(121, 108, 242, 0.4); }
         .timeline-step.active span { color: #796cf2; }
         
+        .timeline-step.rejected .step-point { background: #fee2e2; color: #ef4444; }
+        .timeline-step.rejected span { color: #ef4444; }
+
+        .badge-rejected {
+          background: #fee2e2; color: #ef4444; font-size: 0.65rem; font-weight: 800;
+          padding: 2px 8px; border-radius: 4px; border: 1px solid #fecaca;
+        }
+        
         .step-countdown { 
           position: absolute; top: -30px; background: #fffbeb; color: #b45309; 
           font-size: 0.65rem; font-weight: 700; padding: 4px 10px; border-radius: 20px;
           border: 1px solid #fef3c7; white-space: nowrap;
         }
 
-        .timeline-connector { flex: 1; height: 3px; background: #f3f4f6; margin: 0 -20px; position: relative; top: -14px; }
         .timeline-connector.finished { background: #796cf2; }
         .timeline-connector.active { background: #f1f5f9; border: 1px dashed #cbd5e1; }
+        .timeline-connector.rejected { background: #ef4444; }
 
         .detail-kasbon-card { background: white; border-radius: 20px; padding: 32px; border: 1px solid #f3f4f6; }
         .detail-kasbon-card h3 { font-size: 0.8rem; font-weight: 800; color: #94a3b8; text-transform: uppercase; margin-bottom: 24px; letter-spacing: 0.05em; }
@@ -145,10 +226,14 @@ const StatusTracker: React.FC<StatusTrackerProps> = ({ request, onBack }) => {
         .history-item { display: grid; grid-template-columns: 200px 20px 1fr; font-size: 0.95rem; align-items: start; padding: 4px 0; }
         .history-role { font-weight: 600; color: #475569; }
         .history-colon { color: #94a3b8; font-weight: 800; }
-        .history-info { display: flex; align-items: center; }
-        .history-name { color: #1e293b; font-weight: 700; white-space: nowrap; }
-        .history-date { font-size: 0.95rem; color: #475569; font-weight: 500; }
-        .history-empty { text-align: center; color: #9ca3af; padding: 20px 0; font-size: 0.9rem; }
+        .history-info { display: flex; align-items: center; justify-content: space-between; flex: 1; }
+        .history-name { color: #1e293b; font-weight: 700; }
+        .history-date { font-size: 0.9rem; color: #64748b; font-weight: 500; }
+        .details-grid-modern { display: grid; grid-template-columns: 1fr 340px; gap: 24px; }
+        .attachments-list-modern { display: flex; flex-direction: column; gap: 12px; }
+        .attachment-item { display: flex; align-items: center; gap: 10px; background: #f8fafc; padding: 12px; border-radius: 12px; border: 1px solid #e2e8f0; font-size: 0.9rem; font-weight: 600; color: #475569; }
+        .attachment-item.link { text-decoration: none; transition: all 0.2s; cursor: pointer; color: #796cf2; border-color: #d1d5db; }
+        .attachment-item.link:hover { background: #f0fdf4; border-color: #796cf2; transform: translateY(-1px); box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1); }
       `}</style>
         </div>
     );
