@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import {
     LayoutDashboard,
     History,
@@ -13,8 +13,9 @@ import {
     Wallet,
     AlertCircle,
     Filter,
-    MoreVertical,
     Search,
+    RefreshCw,
+    Eye,
     Bell,
     PlusSquare,
     ArrowLeft,
@@ -30,8 +31,10 @@ import NewRequestModal from './NewRequestModal';
 import StatusTracker from './StatusTracker';
 import ApprovalScreen from './ApprovalScreen';
 import RealisasiScreen from './RealisasiScreen';
+import RealisasiReviewScreen from './RealisasiReviewScreen';
 import Swal from 'sweetalert2';
 import axios from 'axios';
+import * as XLSX from 'xlsx';
 
 const SlotRequestForm: React.FC<{ currentSlots: number, onBack: () => void, onSubmit: (data: { reason: string, requestedSlots: number }) => void }> = ({ currentSlots, onBack, onSubmit }) => {
     const [reason, setReason] = useState('');
@@ -126,6 +129,12 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
     const [deptSearchTerm, setDeptSearchTerm] = useState('');
     const [deptPage, setDeptPage] = useState(1);
     const deptsPerPage = 15;
+
+    // Admin Requests State
+    const [adminReqSearchTerm, setAdminReqSearchTerm] = useState('');
+    const [adminReqPage, setAdminReqPage] = useState(1);
+    const adminReqsPerPage = 10;
+    const [adminFilter, setAdminFilter] = useState<'RECENT' | 'OUTSTANDING' | 'OVERDUE' | 'DISBURSED'>('RECENT');
 
     const fetchCostCenterDepts = () => {
         setLoadingDepts(true);
@@ -275,20 +284,63 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
     const activeKasbonCount = requests.filter(r => !['SETTLED', 'REVOKED', 'REJECTED'].includes(r.status)).length;
     const activeRequests = requests.filter(r => !['SETTLED', 'REVOKED', 'REJECTED'].includes(r.status));
 
-    // Admin View Mock Data
-    const adminStats = [
-        { title: 'Total Kasbon', value: 'Rp 450.250.000', icon: <Wallet size={20} />, color: '#2563eb', change: '+12.5%' },
-        { title: 'Outstanding', value: 'Rp 125.400.000', icon: <Clock size={20} />, color: '#f59e0b', change: '8 Requests' },
-        { title: 'Overdue Settlement', value: '3 Karyawan', icon: <AlertCircle size={20} />, color: '#ef4444', change: 'Action Required' },
-        { title: 'Disbursed (This Week)', value: 'Rp 45.000.000', icon: <CheckCircle2 size={20} />, color: '#796cf2', change: 'H-2 Disbursement' },
-    ];
+    // --- ADMIN VIEW DATA LOGIC ---
+    const realAdminStats = useMemo(() => {
+        const total = requests.filter(r => r.status !== 'REVOKED' && r.status !== 'REJECTED').reduce((sum, r) => sum + r.amount, 0);
+        const outstanding = requests.filter(r => !['SETTLED', 'REVOKED', 'REJECTED'].includes(r.status)).reduce((sum, r) => sum + r.amount, 0);
+        const overdueCount = requests.filter(r => r.isOverdue && r.status !== 'SETTLED' && r.status !== 'REVOKED').length;
 
-    const allRequestsSummary = [
-        { id: 'KB-001', user: 'Budi Santoso', dept: 'IT Ops', amount: 'Rp 5.000.000', date: '26 Feb 2026', status: 'Pending HOD', overdue: false },
-        { id: 'KB-002', user: 'Siti Aminah', dept: 'Marketing', amount: 'Rp 2.500.000', date: '24 Feb 2026', status: 'Finance Review', overdue: false },
-        { id: 'KB-003', user: 'Adam Wijaya', dept: 'Sales', amount: 'Rp 10.000.000', date: '10 Feb 2026', status: 'Approved', overdue: true },
-        { id: 'KB-004', user: 'Diana Putri', dept: 'HRD', amount: 'Rp 1.200.000', date: '25 Feb 2026', status: 'Disbursed', overdue: false },
-    ];
+        const today = new Date();
+        const startOfWeek = new Date(today.getFullYear(), today.getMonth(), today.getDate() - today.getDay());
+        const disbursedThisWeek = requests
+            .filter(r => (r.status === 'DISBURSED' || r.status === 'SETTLED') && new Date(r.date) >= startOfWeek)
+            .reduce((sum, r) => sum + r.amount, 0);
+
+        return [
+            { key: 'RECENT', title: 'Total Kasbon', value: `Rp ${total.toLocaleString()}`, icon: <Wallet size={20} />, color: '#2563eb', change: 'Lifetime Total' },
+            { key: 'OUTSTANDING', title: 'Outstanding', value: `Rp ${outstanding.toLocaleString()}`, icon: <Clock size={20} />, color: '#f59e0b', change: `${requests.filter(r => !['SETTLED', 'REVOKED', 'REJECTED'].includes(r.status)).length} Requests` },
+            { key: 'OVERDUE', title: 'Overdue Settlement', value: `${overdueCount} Karyawan`, icon: <AlertCircle size={20} />, color: '#ef4444', change: overdueCount > 0 ? 'Urgent Action' : 'All Clear' },
+            { key: 'DISBURSED', title: 'Disbursed (This Week)', value: `Rp ${disbursedThisWeek.toLocaleString()}`, icon: <CheckCircle2 size={20} />, color: '#796cf2', change: 'Current Week' },
+        ];
+    }, [requests]);
+
+    const filteredAdminOverviewRequests = useMemo(() => {
+        let base = [];
+        if (adminFilter === 'RECENT') {
+            base = [...requests].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()).slice(0, 10);
+        } else if (adminFilter === 'OUTSTANDING') {
+            base = requests.filter(r => !['SETTLED', 'REVOKED', 'REJECTED'].includes(r.status)).sort((a, b) => b.amount - a.amount);
+        } else if (adminFilter === 'OVERDUE') {
+            base = requests.filter(r => r.isOverdue && r.status !== 'SETTLED' && r.status !== 'REVOKED');
+        } else {
+            base = requests.filter(r => (r.status === 'DISBURSED' || r.status === 'SETTLED')).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        }
+        return base;
+    }, [requests, adminFilter]);
+
+    const handleExportAdminXLSX = () => {
+        if (filteredAdminOverviewRequests.length === 0) {
+            Swal.fire('Data Kosong', 'Tidak ada data untuk di-export.', 'warning');
+            return;
+        }
+
+        const dataToExport = filteredAdminOverviewRequests.map((req: any) => ({
+            'ID Request': req.id,
+            'Pemohon': req.requestor || req.user,
+            'Departemen': req.department || req.dept,
+            'Nominal': req.amount,
+            'Tanggal': req.date,
+            'Status': req.status,
+            'Overdue': req.isOverdue || req.overdue ? 'YES' : 'NO'
+        }));
+
+        const ws = XLSX.utils.json_to_sheet(dataToExport);
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Admin Overview');
+
+        const fileName = `Kasbon_Admin_${adminFilter}_${new Date().toISOString().split('T')[0]}.xlsx`;
+        XLSX.writeFile(wb, fileName);
+    };
 
     const getAdminStatusColor = (status: string, overdue: boolean) => {
         if (overdue && status !== 'SETTLED' && status !== 'REVOKED') return '#ef4444';
@@ -743,11 +795,41 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                     {currentView === 'APPROVAL' && selectedRequest && (
                         <ApprovalScreen
                             request={selectedRequest}
-                            onBack={() => setCurrentView('APPROVAL_LIST')}
+                            onBack={() => {
+                                if (currentUser.role === 'FINANCE') setCurrentView('FINANCE_APPROVAL');
+                                else setCurrentView('APPROVAL_LIST');
+                            }}
                             onApprove={async () => {
-                                await updateRequest({ ...selectedRequest, status: 'APPROVED' });
-                                setCurrentView('APPROVAL_LIST');
-                                Swal.fire({ icon: 'success', title: 'Berhasil!', text: 'Kasbon telah disetujui.', timer: 1500, showConfirmButton: false });
+                                const isFinance = selectedRequest.approvalPath[selectedRequest.currentStepIndex]?.role === 'Finance';
+
+                                const { isConfirmed } = await Swal.fire({
+                                    title: 'Setujui Kasbon?',
+                                    text: "Apakah Anda yakin ingin menyetujui pengajuan kasbon ini?",
+                                    icon: 'question',
+                                    showCancelButton: true,
+                                    confirmButtonColor: '#796cf2',
+                                    cancelButtonColor: '#94a3b8',
+                                    confirmButtonText: 'Ya, Setujui',
+                                    cancelButtonText: 'Batal'
+                                });
+
+                                if (isConfirmed) {
+                                    await updateRequest({ ...selectedRequest, status: 'APPROVED' });
+
+                                    // Go back to the right list
+                                    if (currentUser.role === 'FINANCE') setCurrentView('FINANCE_APPROVAL');
+                                    else setCurrentView('APPROVAL_LIST');
+
+                                    Swal.fire({
+                                        icon: 'success',
+                                        title: 'Berhasil!',
+                                        text: isFinance
+                                            ? `Kasbon #${selectedRequest.id} telah disetujui (Final) dan siap untuk dicairkan.`
+                                            : `Kasbon #${selectedRequest.id} telah disetujui dan berlanjut ke tahap berikutnya.`,
+                                        timer: 3000,
+                                        showConfirmButton: true
+                                    });
+                                }
                             }}
                             onReject={async () => {
                                 const { value: reason } = await Swal.fire({
@@ -757,14 +839,27 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                     inputPlaceholder: 'Tulis alasan di sini...',
                                     showCancelButton: true,
                                     confirmButtonColor: '#ef4444',
+                                    cancelButtonColor: '#94a3b8',
                                     confirmButtonText: 'Ya, Tolak',
-                                    cancelButtonText: 'Batal'
+                                    cancelButtonText: 'Batal',
+                                    inputValidator: (value) => {
+                                        if (!value) return 'Anda harus memberikan alasan!';
+                                    }
                                 });
 
                                 if (reason) {
                                     await updateRequest({ ...selectedRequest, status: 'REJECTED' }, reason);
-                                    setCurrentView('APPROVAL_LIST');
-                                    Swal.fire({ icon: 'success', title: 'Ditolak', text: 'Kasbon telah ditolak.', timer: 1500, showConfirmButton: false });
+
+                                    if (currentUser.role === 'FINANCE') setCurrentView('FINANCE_APPROVAL');
+                                    else setCurrentView('APPROVAL_LIST');
+
+                                    Swal.fire({
+                                        icon: 'success',
+                                        title: 'Ditolak',
+                                        text: 'Pengajuan kasbon telah ditolak dengan alasan.',
+                                        timer: 2000,
+                                        showConfirmButton: false
+                                    });
                                 }
                             }}
                         />
@@ -777,17 +872,28 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                         />
                     )}
 
+                    {currentView === 'REALISASI_REVIEW' && selectedRequest && (
+                        <RealisasiReviewScreen
+                            request={selectedRequest}
+                            onBack={() => setCurrentView('FINANCE_REALISASI')}
+                        />
+                    )}
+
                     {/* --- ADMIN VIEWS --- */}
                     {currentView === 'ADMIN_OVERVIEW' && (
                         <div className="admin-overview-container">
                             <div className="view-title-header">
                                 <h1>Admin Overview</h1>
-                                <button className="btn-export"><Download size={18} /> Export Data</button>
                             </div>
 
                             <div className="stats-grid-admin">
-                                {adminStats.map((stat, idx) => (
-                                    <div key={idx} className="stat-card-admin">
+                                {realAdminStats.map((stat: any, idx: number) => (
+                                    <div
+                                        key={idx}
+                                        className={`stat-card-admin clickable-stat ${adminFilter === stat.key ? 'active-stat' : ''}`}
+                                        onClick={() => setAdminFilter(stat.key as any)}
+                                        style={{ cursor: 'pointer' }}
+                                    >
                                         <div className="stat-header-admin">
                                             <div className="stat-icon-admin" style={{ color: stat.color }}>{stat.icon}</div>
                                             <span className="stat-delta">{stat.change}</span>
@@ -800,11 +906,20 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                 ))}
                             </div>
 
-                            <div className="admin-table-card">
+                            <div className="admin-table-card" style={{ marginTop: '32px' }}>
                                 <div className="table-header-admin">
-                                    <h3>Permintaan Terbaru</h3>
-                                    <div className="header-filters">
-                                        <button className="btn-filter-admin"><Filter size={16} /> Filter</button>
+                                    <h3>
+                                        {adminFilter === 'RECENT' ? 'Permintaan Terbaru' :
+                                            adminFilter === 'OUTSTANDING' ? 'Permintaan Outstanding' :
+                                                adminFilter === 'OVERDUE' ? 'Penyelesaian Terlambat (Overdue)' : 'Kasbon Sudah Cair (Week)'}
+                                    </h3>
+                                    <div className="header-filters" style={{ display: 'flex', gap: '10px' }}>
+                                        <button className="btn-export-xlsx" onClick={handleExportAdminXLSX}>
+                                            <Download size={16} /> Export XLSX
+                                        </button>
+                                        <button className="btn-filter-admin" onClick={() => setAdminFilter('RECENT')}>
+                                            <RefreshCw size={16} /> Reset
+                                        </button>
                                     </div>
                                 </div>
                                 <div className="table-unified">
@@ -820,22 +935,34 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {allRequestsSummary.map(req => (
-                                                <tr key={req.id}>
-                                                    <td><span className="badge-id-admin">{req.id}</span></td>
-                                                    <td>{req.user}</td>
-                                                    <td>{req.dept}</td>
-                                                    <td className="admin-amt">{req.amount}</td>
-                                                    <td>
-                                                        <div className="admin-status-flex">
-                                                            <div className="status-dot" style={{ background: getAdminStatusColor(req.status, req.overdue) }} />
-                                                            <span>{req.status}</span>
-                                                            {req.overdue && <span className="tag-overdue">TELAT</span>}
-                                                        </div>
+                                            {filteredAdminOverviewRequests.length === 0 ? (
+                                                <tr>
+                                                    <td colSpan={6} style={{ textAlign: 'center', padding: '40px', color: '#94a3b8' }}>
+                                                        Tidak ada data yang sesuai.
                                                     </td>
-                                                    <td><button className="btn-more-admin"><MoreVertical size={16} /></button></td>
                                                 </tr>
-                                            ))}
+                                            ) : (
+                                                filteredAdminOverviewRequests.map((req: any) => (
+                                                    <tr key={req.id}>
+                                                        <td><span className="badge-id-admin">{req.id}</span></td>
+                                                        <td style={{ fontWeight: 700 }}>{req.requestor}</td>
+                                                        <td>{req.department}</td>
+                                                        <td className="admin-amt">Rp {req.amount.toLocaleString()}</td>
+                                                        <td>
+                                                            <div className="admin-status-flex">
+                                                                <div className="status-dot" style={{ background: getAdminStatusColor(req.status, req.isOverdue) }} />
+                                                                <span>{req.status}</span>
+                                                                {req.isOverdue && req.status !== 'SETTLED' && req.status !== 'REVOKED' && <span className="tag-overdue">TELAT</span>}
+                                                            </div>
+                                                        </td>
+                                                        <td style={{ textAlign: 'right' }}>
+                                                            <button className="btn-more-admin" onClick={() => handleViewRequest(req)}>
+                                                                <Eye size={16} /> Detail
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            )}
                                         </tbody>
                                     </table>
                                 </div>
@@ -1253,10 +1380,21 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                             <div className="view-title-header">
                                 <div>
                                     <h1>Central Management (All Requests)</h1>
-                                    <p style={{ color: '#64748b' }}>Revoke atau batalkan kasbon yang sudah tidak aktif</p>
+                                    <p style={{ color: '#64748b' }}>Revoke atau batalkan kasbon yang sedang berjalan (Belum Final Approval)</p>
                                 </div>
                                 <div className="header-filters">
-                                    <button className="btn-filter-admin"><Filter size={16} /> Filter Status</button>
+                                    <div className="search-bar-unified" style={{ width: '300px' }}>
+                                        <Search size={18} />
+                                        <input
+                                            type="text"
+                                            placeholder="Cari ID atau Pemohon..."
+                                            value={adminReqSearchTerm}
+                                            onChange={e => {
+                                                setAdminReqSearchTerm(e.target.value);
+                                                setAdminReqPage(1);
+                                            }}
+                                        />
+                                    </div>
                                 </div>
                             </div>
 
@@ -1274,65 +1412,135 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {requests.map(req => (
-                                                <tr key={req.id}>
-                                                    <td><span className="badge-id-admin">{req.id}</span></td>
-                                                    <td>
-                                                        <div style={{ display: 'flex', flexDirection: 'column' }}>
-                                                            <strong>{req.requestor}</strong>
-                                                            <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{req.department}</span>
-                                                        </div>
-                                                    </td>
-                                                    <td style={{ fontSize: '0.85rem' }}>{req.purpose}</td>
-                                                    <td className="admin-amt">Rp {req.amount.toLocaleString()}</td>
-                                                    <td>
-                                                        <div className="admin-status-flex">
-                                                            <div className="status-dot" style={{ background: getAdminStatusColor(req.status, req.isOverdue) }} />
-                                                            <span>{req.status}</span>
-                                                            {req.isOverdue && req.status !== 'SETTLED' && req.status !== 'REVOKED' && <span className="tag-overdue">TELAT</span>}
-                                                        </div>
-                                                    </td>
-                                                    <td style={{ textAlign: 'right' }}>
-                                                        {req.status !== 'REVOKED' && req.status !== 'SETTLED' && (
-                                                            <button
-                                                                className="btn-revoke-action"
-                                                                title="Revoke Kasbon"
-                                                                onClick={async () => {
-                                                                    const { value: reason } = await Swal.fire({
-                                                                        title: 'Revoke Kasbon',
-                                                                        input: 'textarea',
-                                                                        inputLabel: 'Masukkan alasan pembatalan/revoke:',
-                                                                        inputPlaceholder: 'Tulis alasan di sini...',
-                                                                        showCancelButton: true,
-                                                                        confirmButtonColor: '#e11d48',
-                                                                        cancelButtonColor: '#64748b',
-                                                                        confirmButtonText: 'Ya, Revoke!',
-                                                                        cancelButtonText: 'Batal'
-                                                                    });
+                                            {(() => {
+                                                const filtered = requests.filter(r =>
+                                                    r.id.toLowerCase().includes(adminReqSearchTerm.toLowerCase()) ||
+                                                    r.requestor.toLowerCase().includes(adminReqSearchTerm.toLowerCase()) ||
+                                                    r.purpose.toLowerCase().includes(adminReqSearchTerm.toLowerCase())
+                                                );
 
-                                                                    if (reason) {
-                                                                        revokeRequest(req.id, reason);
-                                                                        Swal.fire({
-                                                                            title: 'Berhasil!',
-                                                                            text: `Kasbon ${req.id} telah dicabut.`,
-                                                                            icon: 'success',
-                                                                            confirmButtonColor: '#796cf2'
-                                                                        });
-                                                                    }
-                                                                }}
-                                                            >
-                                                                <Trash2 size={16} /> Revoke
-                                                            </button>
-                                                        )}
-                                                        {req.status === 'REVOKED' && (
-                                                            <span style={{ color: '#94a3b8', fontSize: '0.8rem', fontStyle: 'italic' }}>Sudah Dicabut</span>
-                                                        )}
-                                                    </td>
-                                                </tr>
-                                            ))}
+                                                const startIndex = (adminReqPage - 1) * adminReqsPerPage;
+                                                const paginated = filtered.slice(startIndex, startIndex + adminReqsPerPage);
+
+                                                if (paginated.length === 0) {
+                                                    return (
+                                                        <tr>
+                                                            <td colSpan={6} style={{ textAlign: 'center', padding: '40px', color: '#94a3b8' }}>
+                                                                <Search size={40} style={{ opacity: 0.2, marginBottom: '16px' }} />
+                                                                <p>Tidak ada data pengajuan yang ditemukan.</p>
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                }
+
+                                                return (
+                                                    <>
+                                                        {paginated.map(req => (
+                                                            <tr key={req.id}>
+                                                                <td><span className="badge-id-admin">{req.id}</span></td>
+                                                                <td>
+                                                                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                                                        <strong>{req.requestor}</strong>
+                                                                        <span style={{ fontSize: '0.7rem', color: '#64748b' }}>{req.department}</span>
+                                                                    </div>
+                                                                </td>
+                                                                <td style={{ fontSize: '0.85rem' }}>{req.purpose}</td>
+                                                                <td className="admin-amt">Rp {req.amount.toLocaleString()}</td>
+                                                                <td>
+                                                                    <div className="admin-status-flex">
+                                                                        <div className="status-dot" style={{ background: getAdminStatusColor(req.status, req.isOverdue) }} />
+                                                                        <span>{req.status}</span>
+                                                                        {req.isOverdue && req.status !== 'SETTLED' && req.status !== 'REVOKED' && <span className="tag-overdue">TELAT</span>}
+                                                                    </div>
+                                                                </td>
+                                                                <td style={{ textAlign: 'right' }}>
+                                                                    {req.status === 'PENDING' && (
+                                                                        <button
+                                                                            className="btn-revoke-action"
+                                                                            title="Revoke Kasbon"
+                                                                            onClick={async () => {
+                                                                                const { value: reason } = await Swal.fire({
+                                                                                    title: 'Revoke Kasbon',
+                                                                                    input: 'textarea',
+                                                                                    inputLabel: 'Masukkan alasan pembatalan/revoke:',
+                                                                                    inputPlaceholder: 'Tulis alasan di sini...',
+                                                                                    showCancelButton: true,
+                                                                                    confirmButtonColor: '#e11d48',
+                                                                                    cancelButtonColor: '#64748b',
+                                                                                    confirmButtonText: 'Ya, Revoke!',
+                                                                                    cancelButtonText: 'Batal'
+                                                                                });
+
+                                                                                if (reason) {
+                                                                                    revokeRequest(req.id, reason);
+                                                                                    Swal.fire({
+                                                                                        title: 'Berhasil!',
+                                                                                        text: `Kasbon ${req.id} telah dicabut.`,
+                                                                                        icon: 'success',
+                                                                                        confirmButtonColor: '#796cf2'
+                                                                                    });
+                                                                                }
+                                                                            }}
+                                                                        >
+                                                                            <Trash2 size={16} /> Revoke
+                                                                        </button>
+                                                                    )}
+                                                                    {req.status === 'REVOKED' && (
+                                                                        <span style={{ color: '#94a3b8', fontSize: '0.8rem', fontStyle: 'italic' }}>Sudah Dicabut</span>
+                                                                    )}
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </>
+                                                );
+                                            })()}
                                         </tbody>
                                     </table>
                                 </div>
+
+                                {/* Pagination Footer */}
+                                {(() => {
+                                    const filtered = requests.filter(r =>
+                                        r.id.toLowerCase().includes(adminReqSearchTerm.toLowerCase()) ||
+                                        r.requestor.toLowerCase().includes(adminReqSearchTerm.toLowerCase()) ||
+                                        r.purpose.toLowerCase().includes(adminReqSearchTerm.toLowerCase())
+                                    );
+                                    const totalPages = Math.ceil(filtered.length / adminReqsPerPage);
+                                    if (totalPages <= 1) return null;
+
+                                    return (
+                                        <div className="pagination-footer-premium">
+                                            <div className="pagination-info">
+                                                Showing <strong>{(adminReqPage - 1) * adminReqsPerPage + 1}</strong> to <strong>{Math.min(adminReqPage * adminReqsPerPage, filtered.length)}</strong> of <strong>{filtered.length}</strong> results
+                                            </div>
+                                            <div className="pagination-btns">
+                                                <button
+                                                    disabled={adminReqPage === 1}
+                                                    onClick={() => setAdminReqPage(p => p - 1)}
+                                                    className="btn-page-step"
+                                                >
+                                                    Previous
+                                                </button>
+                                                {[...Array(totalPages)].map((_, i) => (
+                                                    <button
+                                                        key={i}
+                                                        className={`btn-page-num ${adminReqPage === i + 1 ? 'active' : ''}`}
+                                                        onClick={() => setAdminReqPage(i + 1)}
+                                                    >
+                                                        {i + 1}
+                                                    </button>
+                                                ))}
+                                                <button
+                                                    disabled={adminReqPage === totalPages}
+                                                    onClick={() => setAdminReqPage(p => p + 1)}
+                                                    className="btn-page-step"
+                                                >
+                                                    Next
+                                                </button>
+                                            </div>
+                                        </div>
+                                    );
+                                })()}
                             </div>
                         </div>
                     )}
@@ -1477,13 +1685,40 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            <tr>
-                                                <td><span className="badge-id-admin">KB-005</span></td>
-                                                <td>Andi Suherman</td>
-                                                <td className="admin-amt">Rp 2.500.000</td>
-                                                <td><span className="layer-tag">Waiting Finance</span></td>
-                                                <td><button className="btn-save-inline" style={{ color: '#796cf2' }}>Review & Approve</button></td>
-                                            </tr>
+                                            {requests.filter(r => {
+                                                const currentStep = r.approvalPath[r.currentStepIndex];
+                                                return r.status === 'PENDING' && currentStep?.role === 'Finance';
+                                            }).length === 0 ? (
+                                                <tr>
+                                                    <td colSpan={5} style={{ textAlign: 'center', padding: '40px', color: '#94a3b8' }}>
+                                                        Tidak ada kasbon yang menunggu approval Finance.
+                                                    </td>
+                                                </tr>
+                                            ) : (
+                                                requests.filter(r => {
+                                                    const currentStep = r.approvalPath[r.currentStepIndex];
+                                                    return r.status === 'PENDING' && currentStep?.role === 'Finance';
+                                                }).map(req => (
+                                                    <tr key={req.id}>
+                                                        <td><span className="badge-id-admin">#{req.id}</span></td>
+                                                        <td><strong>{req.requestor}</strong></td>
+                                                        <td className="admin-amt">Rp {req.amount.toLocaleString()}</td>
+                                                        <td><span className="layer-tag" style={{ background: '#f0fdf4', color: '#16a34a' }}>Waiting Finance</span></td>
+                                                        <td>
+                                                            <button
+                                                                className="btn-save-inline"
+                                                                style={{ color: '#796cf2', fontWeight: 700 }}
+                                                                onClick={() => {
+                                                                    setSelectedRequest(req);
+                                                                    setCurrentView('APPROVAL');
+                                                                }}
+                                                            >
+                                                                Review & Approve
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            )}
                                         </tbody>
                                     </table>
                                 </div>
@@ -1499,10 +1734,52 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                     <p style={{ color: '#64748b' }}>Review bukti pengeluaran dan settlement kasbon</p>
                                 </div>
                             </div>
-                            <div className="placeholder-view">
-                                <div style={{ background: '#f1f5f9', padding: '40px', borderRadius: '24px', display: 'inline-block' }}>
-                                    <Wallet size={48} color="#94a3b8" />
-                                    <p style={{ marginTop: '16px' }}>Belum ada dokumen realisasi yang masuk untuk di-review.</p>
+                            <div className="admin-table-card" style={{ marginTop: '32px' }}>
+                                <div className="table-unified">
+                                    <table>
+                                        <thead>
+                                            <tr>
+                                                <th>ID</th>
+                                                <th>Pemohon</th>
+                                                <th>Jumlah Awal</th>
+                                                <th>Realisasi</th>
+                                                <th>Action</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {requests.filter(r => r.status === 'APPROVED' && r.isRealized).length === 0 ? (
+                                                <tr>
+                                                    <td colSpan={5} style={{ textAlign: 'center', padding: '100px', color: '#94a3b8' }}>
+                                                        <Wallet size={48} color="#cbd5e1" style={{ marginBottom: '16px', display: 'block', margin: '0 auto' }} />
+                                                        Belum ada dokumen realisasi yang masuk untuk di-review.
+                                                    </td>
+                                                </tr>
+                                            ) : (
+                                                requests.filter(r => r.status === 'APPROVED' && r.isRealized).map(req => (
+                                                    <tr key={req.id}>
+                                                        <td><span className="badge-id-admin">#{req.id}</span></td>
+                                                        <td><strong>{req.requestor}</strong></td>
+                                                        <td className="admin-amt">Rp {req.amount.toLocaleString()}</td>
+                                                        <td className="admin-amt" style={{ color: '#16a34a' }}>
+                                                            Rp {req.realizationTotal?.toLocaleString() || '0'}
+                                                        </td>
+                                                        <td>
+                                                            <button
+                                                                className="btn-save-inline"
+                                                                style={{ color: '#796cf2', fontWeight: 700 }}
+                                                                onClick={() => {
+                                                                    setSelectedRequest(req);
+                                                                    setCurrentView('REALISASI_REVIEW'); // We need this view
+                                                                }}
+                                                            >
+                                                                Review Realisasi
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            )}
+                                        </tbody>
+                                    </table>
                                 </div>
                             </div>
                         </div>
@@ -1523,19 +1800,50 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                             <tr>
                                                 <th>ID</th>
                                                 <th>Pemohon</th>
-                                                <th>Disbursement Date</th>
-                                                <th>Days Active</th>
+                                                <th>Tanggal Cair</th>
+                                                <th>Status</th>
                                                 <th>Action</th>
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            <tr style={{ background: '#fff1f2' }}>
-                                                <td><span className="badge-id-admin">KB-001</span></td>
-                                                <td>Budi Santoso</td>
-                                                <td>10 Feb 2026</td>
-                                                <td><span style={{ color: '#ef4444', fontWeight: '800' }}>17 Hari</span></td>
-                                                <td><button className="btn-save-inline" style={{ color: '#ef4444' }}>Send Reminder</button></td>
-                                            </tr>
+                                            {requests.filter(r => r.status === 'APPROVED' && !r.isRealized).length === 0 ? (
+                                                <tr>
+                                                    <td colSpan={5} style={{ textAlign: 'center', padding: '40px', color: '#94a3b8' }}>
+                                                        Semua kasbon sudah lapor realisasi. Zero Monitoring!
+                                                    </td>
+                                                </tr>
+                                            ) : (
+                                                requests.filter(r => r.status === 'APPROVED' && !r.isRealized).map(req => (
+                                                    <tr key={req.id} style={{ background: '#fff1f2' }}>
+                                                        <td><span className="badge-id-admin">#{req.id}</span></td>
+                                                        <td><strong>{req.requestor}</strong></td>
+                                                        <td>{req.date}</td>
+                                                        <td><span className="tag-overdue" style={{ fontSize: '0.75rem' }}>WAITING REALISASI</span></td>
+                                                        <td>
+                                                            <button
+                                                                className="btn-save-inline"
+                                                                style={{ color: '#ef4444', fontWeight: 700 }}
+                                                                onClick={() => {
+                                                                    Swal.fire({
+                                                                        title: 'Kirim Reminder?',
+                                                                        text: `Mengirim email pengingat realisasi ke ${req.requestor}?`,
+                                                                        icon: 'info',
+                                                                        showCancelButton: true,
+                                                                        confirmButtonColor: '#796cf2',
+                                                                        confirmButtonText: 'Kirim Email'
+                                                                    }).then(res => {
+                                                                        if (res.isConfirmed) {
+                                                                            Swal.fire('Terkirim!', 'Email reminder telah dikirim.', 'success');
+                                                                        }
+                                                                    });
+                                                                }}
+                                                            >
+                                                                Send Reminder
+                                                            </button>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            )}
                                         </tbody>
                                     </table>
                                 </div>
@@ -1842,11 +2150,16 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
         .btn-export { background: white; border: 1px solid #e2e8f0; padding: 10px 20px; border-radius: 12px; display: flex; align-items: center; gap: 8px; font-weight: 700; cursor: pointer; }
 
         .stats-grid-admin { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
-        .stat-card-admin { background: white; padding: 24px; border-radius: 20px; border: 1px solid #e2e8f0; }
+        .stat-card-admin { background: white; padding: 24px; border-radius: 20px; border: 1px solid #e2e8f0; transition: all 0.2s; }
+        .clickable-stat:hover { transform: translateY(-4px); border-color: #796cf2; box-shadow: 0 10px 15px -3px rgba(121, 108, 242, 0.1); }
+        .active-stat { border-color: #796cf2; background: #f8fafc; box-shadow: inset 0 0 0 1px #796cf2; }
         .stat-header-admin { display: flex; justify-content: space-between; margin-bottom: 20px; }
         .stat-delta { font-size: 0.75rem; background: #f0fdf4; color: #16a34a; padding: 4px 10px; border-radius: 20px; font-weight: 700; }
         .stat-label { color: #64748b; font-size: 0.85rem; font-weight: 600; margin-bottom: 4px; display: block; }
         .stat-val { font-size: 1.4rem; font-weight: 800; color: #1e293b; }
+
+        .btn-export-xlsx { background: white; border: 1.5px solid #e2e8f0; padding: 8px 16px; border-radius: 10px; display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 0.85rem; cursor: pointer; transition: all 0.2s; color: #475569; }
+        .btn-export-xlsx:hover { background: #f8fafc; border-color: #796cf2; color: #796cf2; }
         
         .admin-table-card { background: white; border-radius: 24px; border: 1px solid #e2e8f0; overflow: hidden; }
         .table-header-admin { padding: 24px 32px; border-bottom: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center; }
@@ -1962,7 +2275,72 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
             to { opacity: 1; transform: translateY(0) scale(1); }
         }
 
-      `}</style>
+          /* Pagination Footer Styles */
+        .pagination-footer-premium {
+            padding: 24px 32px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #fafafa;
+            border-top: 1px solid #f1f5f9;
+        }
+        .pagination-info {
+            font-size: 0.85rem;
+            color: #64748b;
+        }
+        .pagination-info strong {
+            color: #1e293b;
+            font-weight: 700;
+        }
+        .pagination-btns {
+            display: flex;
+            gap: 6px;
+        }
+        .btn-page-step {
+            padding: 8px 16px;
+            border-radius: 10px;
+            border: 1px solid #e2e8f0;
+            background: white;
+            color: #475569;
+            font-size: 0.85rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-page-step:hover:not(:disabled) {
+            background: #f8fafc;
+            border-color: #cbd5e1;
+        }
+        .btn-page-step:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .btn-page-num {
+            width: 36px;
+            height: 36px;
+            border-radius: 10px;
+            border: 1px solid #e2e8f0;
+            background: white;
+            color: #475569;
+            font-size: 0.85rem;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .btn-page-num:hover:not(.active) {
+            background: #f8fafc;
+            border-color: #cbd5e1;
+        }
+        .btn-page-num.active {
+            background: #796cf2;
+            color: white;
+            border-color: #796cf2;
+            box-shadow: 0 4px 10px rgba(121, 108, 242, 0.2);
+        }
+    `}</style>
         </div >
     );
 };
