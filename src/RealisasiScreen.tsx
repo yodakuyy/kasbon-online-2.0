@@ -80,7 +80,8 @@ const RealisasiScreen: React.FC<RealisasiScreenProps> = ({ request, onBack }) =>
             ...request,
             realizationItems,
             realizationTotal,
-            status: 'SETTLED'
+            status: request.status, // Keep current status (usually APPROVED)
+            isRealized: true
         });
         Swal.fire({
             title: 'Berhasil!',

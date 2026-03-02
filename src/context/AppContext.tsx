@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, type ReactNode } from 'react';
+import React, { createContext, useContext, useState, useEffect, useMemo, type ReactNode } from 'react';
 import Swal from 'sweetalert2';
 import { supabase } from '../supabaseClient';
 
@@ -110,6 +110,8 @@ interface AppContextType {
     updateSlotMatrix: (layers: string[]) => void;
     getDynamicApprovalPath: (amount: number, isOverSlotRequest?: boolean) => ApprovalStep[];
     addLog: (log: Omit<ActivityLog, 'id' | 'timestamp'>) => void;
+    extractDeptName: (userStr: any) => string;
+    extractCCCode: (userStr: any) => string;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -118,8 +120,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const [role, setRoleState] = useState<UserRole>('USER');
     const [requests, setRequests] = useState<KasbonRequest[]>([]);
     const [assistantForNames, setAssistantForNames] = useState<string[]>([]);
+    const [deptSettings, setDeptSettings] = useState<DeptSetting[]>([]);
+    const [slotRequests, setSlotRequests] = useState<SlotRequest[]>([]);
+    const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
+    const [slotMatrix, setSlotMatrix] = useState<string[]>(['Dept. Head']);
+    const [orgChain, setOrgChain] = useState<any[]>([]);
+    const [matrixConfigs, setMatrixConfigs] = useState<MatrixConfig[]>([
+        { id: '1', minAmount: 1, maxAmount: 5000000, layers: ['Requestor', 'Dept Senior Manager'] },
+        { id: '2', minAmount: 5000001, maxAmount: 10000000, layers: ['Requestor', 'Dept Senior Manager', 'Vice President'] },
+        { id: '3', minAmount: 10000001, maxAmount: 30000000, layers: ['Requestor', 'Dept Senior Manager', 'Vice President', 'Executive Vice President'] },
+        { id: '4', minAmount: 30000001, maxAmount: null, layers: ['Requestor', 'Dept Senior Manager', 'Vice President', 'Executive Vice President', 'Chief Operating Officer'] },
+    ]);
+    const [financeUsers, setFinanceUsers] = useState<any[]>([]);
+
     const userStr = typeof window !== 'undefined' ? localStorage.getItem('kasbon_user') : null;
-    const loggedInUser = userStr ? JSON.parse(userStr) : null;
+    const loggedInUser = useMemo(() => userStr ? JSON.parse(userStr) : null, [userStr]);
 
     useEffect(() => {
         const fetchProxies = async () => {
@@ -152,24 +167,46 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
     const extractDeptName = (userStr: any) => {
         if (!userStr) return 'IT Operation';
+
+        // Try to match with deptSettings first for clean mapping
+        const ccCode = userStr.cost_center || userStr.organization_unit || '';
+        const match = deptSettings.find(d => d.deptId === ccCode);
+        if (match) return match.deptName;
+
+        // Try to use department or org unit over raw cc code
+        const rawDept = userStr.department || userStr.organization_unit;
+
         if (userStr.cost_center) {
             const parts = userStr.cost_center.trim().split(/\s+/);
             if (parts.length > 1) {
-                return parts.slice(1).join(' '); // removes the 'CB018-CC028' prefix
+                return parts.slice(1).join(' '); // removes the 'CB018-CC028' prefix if present
             }
-            return userStr.cost_center; // if no space, just return the whole thing
+            if (rawDept && rawDept !== userStr.cost_center) {
+                return rawDept; // return department if cost center is only the code
+            }
+            return userStr.cost_center;
         }
-        return userStr.department || 'Unknown Dept';
+        return rawDept || 'Unknown Dept';
     };
 
-    const currentUser = {
+    const extractCCCode = (userStr: any) => {
+        if (!userStr) return 'HO-MOLOGIZ';
+        const rawCC = userStr.cost_center || userStr.organization_unit || 'UNKNOWN-CC';
+        const ccMatch = rawCC.trim().match(/^(?:\d{6,7}-)?([A-Z0-9]+-[A-Z0-9]+)(\s+|$)/i);
+        return ccMatch ? ccMatch[1] : rawCC.trim();
+    };
+
+    const currentUser = useMemo(() => ({
         name: loggedInUser?.name || 'Fahmi Ilmawan',
         role,
         dept: extractDeptName(loggedInUser),
         atasanLangsung: loggedInUser?.direct_supervisor || 'Raymond Tjahja',
         isAtasanLangsungActive: (!loggedInUser || loggedInUser?.direct_supervisor) ? true : false,
         assistantFor: assistantForNames
-    };
+    }), [loggedInUser, role, deptSettings, assistantForNames]);
+
+    // Add extra tools manually for UI
+    const tools = useMemo(() => ({ extractDeptName, extractCCCode }), [deptSettings])
 
     const fetchKasbons = async () => {
         try {
@@ -230,7 +267,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }, []);
 
 
-    const [slotRequests, setSlotRequests] = useState<SlotRequest[]>([]);
+
 
     const fetchSlotRequests = async () => {
         try {
@@ -260,8 +297,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             console.error('Failed to fetch slot requests:', error);
         }
     };
-    const [slotMatrix, setSlotMatrix] = useState<string[]>(['Dept. Head']);
-    const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
+
 
     const fetchActivityLogs = async () => {
         try {
@@ -312,13 +348,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
 
     // ===== APPROVAL MATRIX (from DB) =====
-    const [matrixConfigs, setMatrixConfigs] = useState<MatrixConfig[]>([
-        // Fallback defaults until API loads
-        { id: '1', minAmount: 1, maxAmount: 5000000, layers: ['Requestor', 'Dept Senior Manager'] },
-        { id: '2', minAmount: 5000001, maxAmount: 10000000, layers: ['Requestor', 'Dept Senior Manager', 'Vice President'] },
-        { id: '3', minAmount: 10000001, maxAmount: 30000000, layers: ['Requestor', 'Dept Senior Manager', 'Vice President', 'Executive Vice President'] },
-        { id: '4', minAmount: 30000001, maxAmount: null, layers: ['Requestor', 'Dept Senior Manager', 'Vice President', 'Executive Vice President', 'Chief Operating Officer'] },
-    ]);
+
 
     const fetchApprovalMatrix = async () => {
         try {
@@ -338,7 +368,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
 
     // ===== ORG CHAIN (from Modena Identity) =====
-    const [orgChain, setOrgChain] = useState<any[]>([]);
+
 
     const fetchOrgChain = async () => {
         try {
@@ -357,7 +387,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     };
 
     // ===== FINANCE USERS (from user_roles + modena identity) =====
-    const [financeUsers, setFinanceUsers] = useState<any[]>([]);
+
 
     const fetchFinanceUsers = async () => {
         try {
@@ -404,7 +434,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         };
     }, [orgChain.length]);
 
-    const [deptSettings, setDeptSettings] = useState<DeptSetting[]>([]);
+
 
     const fetchDeptSettings = async () => {
         try {
@@ -481,11 +511,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     status: updatedRequest.status,
-                    approver_name: currentUser.name, // The person who clicked
-                    remarks: remarks
+                    approver_name: currentUser.name,
+                    remarks: remarks,
+                    isRealized: updatedRequest.isRealized,
+                    realizationItems: updatedRequest.realizationItems,
+                    realizationTotal: updatedRequest.realizationTotal
                 })
             });
             await fetchKasbons(); // Refresh global list
+            fetchDeptSettings(); // Refresh settings just in case something reverted (like slots)
         } catch (error) {
             console.error('Failed to update request:', error);
             Swal.fire({ icon: 'error', title: 'Error', text: 'Gagal update status kasbon' });
@@ -523,7 +557,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                     requestor_emp_no: loggedInUser?.emp_no,
                     requestor_name: currentUser.name,
                     department_name: currentUser.dept,
-                    cost_center_code: loggedInUser?.cost_center || 'HO-MOLOGIZ', // Default for now
+                    cost_center_code: extractCCCode(loggedInUser),
                     reason: newSlotReq.reason,
                     current_slots: newSlotReq.currentSlots,
                     requested_slots: newSlotReq.requestedSlots,
@@ -725,12 +759,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
         const emp_no = loggedUser?.emp_no || 'NIP-UNKNOWN';
         const name = loggedUser?.name || currentUser.name;
-        const rawCC = loggedUser?.cost_center || 'UNKNOWN-CC';
-        let costCenter = rawCC;
-        const ccMatch = rawCC.trim().match(/^(?:\d{6,7}-)?([A-Z0-9]+-[A-Z0-9]+)\s+(.+)$/i);
-        if (ccMatch) {
-            costCenter = ccMatch[1];
-        }
+
+        const costCenter = extractCCCode(loggedUser);
 
         const activeRequests = requests.filter(r => r.requestor === name && r.status !== 'SETTLED');
         const nextSlot = activeRequests.length + 1;
@@ -793,7 +823,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             updateSlotRequest,
             updateSlotMatrix,
             getDynamicApprovalPath,
-            addLog
+            addLog,
+            extractDeptName: tools.extractDeptName,
+            extractCCCode: tools.extractCCCode
         }}>
             {children}
         </AppContext.Provider>

@@ -106,7 +106,8 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
         matrixConfigs, deptSettings, updateMatrixConfig, saveMatrixConfig,
         slotRequests, addSlotRequest, updateSlotRequest,
         slotMatrix, updateSlotMatrix, activityLogs,
-        revokeRequest, updateRequest, addLog
+        revokeRequest, updateRequest, addLog,
+        extractDeptName, extractCCCode
     } = useApp();
 
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -597,6 +598,37 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                     ))}
                                 </div>
 
+                                {slotRequests.filter(s => s.status === 'PENDING' && s.requestor === currentUser.name).length > 0 && (
+                                    <>
+                                        <div className="section-header" style={{ marginTop: '24px' }}>
+                                            <h3>Pengajuan Slot Menunggu Persetujuan</h3>
+                                        </div>
+                                        <div className="kasbon-list-modern">
+                                            {slotRequests.filter(s => s.status === 'PENDING' && s.requestor === currentUser.name).map(sr => (
+                                                <div key={sr.id} className="kasbon-item-modern" onClick={() => {
+                                                    setSelectedSlotReq(sr);
+                                                    setCurrentView('APPROVAL_SLOT');
+                                                }} style={{ cursor: 'pointer', position: 'relative' }}>
+                                                    <div className="kasbon-info-main">
+                                                        <div className="kasbon-meta-row">
+                                                            <span className="kasbon-id">#{sr.id}</span>
+                                                            <span className="kasbon-date-label"><Clock size={12} /> {sr.date}</span>
+                                                        </div>
+                                                        <div className="kasbon-amount">{sr.requestedSlots} Slots requested</div>
+                                                        <div className="kasbon-requestor-info">Alasan: <strong>{sr.reason}</strong></div>
+                                                    </div>
+                                                    <div className="kasbon-status-area">
+                                                        <div className="status-badge-modern PENDING">
+                                                            <Clock size={14} /> Waiting Approval
+                                                        </div>
+                                                        <button className="item-action-btn"><ChevronRight size={18} /></button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </>
+                                )}
+
                             </section>
                         </>
                     )}
@@ -656,6 +688,39 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                                 </td>
                                                 <td>
                                                     <button className="btn-view-history" onClick={() => handleViewRequest(req)}>
+                                                        Detail
+                                                    </button>
+                                                </td>
+                                            </tr>
+                                        ))}
+
+                                        {slotRequests.filter(s => s.requestor === currentUser.name && s.status !== 'PENDING').map(sr => (
+                                            <tr key={`slot-${sr.id}`}>
+                                                <td>
+                                                    <div className="history-date">
+                                                        <span className="h-day">{sr.date.split('-')[2]}</span>
+                                                        <span className="h-month-year">{new Date(sr.date).toLocaleDateString('id-ID', { month: 'short', year: 'numeric' })}</span>
+                                                    </div>
+                                                </td>
+                                                <td><span className="history-id-tag">#{sr.id} (Slot)</span></td>
+                                                <td>
+                                                    <div className="history-purpose">
+                                                        <strong>Request Tambah Slot</strong>
+                                                        <span>Minta {sr.requestedSlots} Slots</span>
+                                                    </div>
+                                                </td>
+                                                <td><span className="history-nominal">-</span></td>
+                                                <td><span className="history-realization">-</span></td>
+                                                <td>
+                                                    <span className={`history-status-badge ${sr.status}`}>
+                                                        {sr.status}
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    <button className="btn-view-history" onClick={() => {
+                                                        setSelectedSlotReq(sr);
+                                                        setCurrentView('APPROVAL_SLOT');
+                                                    }}>
                                                         Detail
                                                     </button>
                                                 </td>
@@ -744,7 +809,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                             <div className="a-info">
                                                 <strong>{sr.requestor} (Nambah Slot)</strong>
                                                 <div className="a-meta">
-                                                    <span>{sr.department} • {sr.date}</span>
+                                                    <span>{deptSettings.find(d => d.deptId === extractCCCode({ cost_center: sr.department }))?.deptName || extractDeptName({ cost_center: sr.department })} • {sr.date}</span>
                                                     <span className="badge-slot-type">SLOT EXCEPTION</span>
                                                 </div>
                                             </div>
@@ -778,7 +843,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                 </div>
                                 <div className="slot-req-details-grid">
                                     <div className="s-detail"><span>Pemohon</span><strong>{selectedSlotReq.requestor}</strong></div>
-                                    <div className="s-detail"><span>Departemen</span><strong>{selectedSlotReq.department}</strong></div>
+                                    <div className="s-detail"><span>Departemen</span><strong>{deptSettings.find(d => d.deptId === extractCCCode({ cost_center: selectedSlotReq.department }))?.deptName || extractDeptName({ cost_center: selectedSlotReq.department })}</strong></div>
                                     <div className="s-detail"><span>Slot Saat Ini</span><strong>{selectedSlotReq.currentSlots}</strong></div>
                                     <div className="s-detail"><span>Slot Diminta</span><strong className="text-primary">{selectedSlotReq.requestedSlots}</strong></div>
                                 </div>
@@ -786,22 +851,72 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                     <h5>Alasan Kebutuhan Slot</h5>
                                     <p>"{selectedSlotReq.reason}"</p>
                                 </div>
-                                <div className="approval-actions-footer">
-                                    <button className="btn-reject-modern" onClick={() => {
-                                        updateSlotRequest({ ...selectedSlotReq, status: 'REJECTED' });
-                                        setCurrentView('APPROVAL_LIST');
-                                    }}>Tolak</button>
-                                    <button className="btn-approve-modern" onClick={() => {
-                                        updateSlotRequest({ ...selectedSlotReq, status: 'APPROVED' });
-                                        setCurrentView('APPROVAL_LIST');
-                                        Swal.fire({
-                                            title: 'Berhasil Setujui!',
-                                            html: `NOTIFIKASI EMAIL TERKIRIM KE FINANCE:<br/><br/>Slot Departemen <b>${selectedSlotReq.department}</b> telah ditambah menjadi <b>${selectedSlotReq.requestedSlots} Slots</b>.`,
-                                            icon: 'success',
-                                            confirmButtonColor: '#796cf2'
-                                        });
-                                    }}>Setujui & Notif Finance</button>
-                                </div>
+                                {(selectedSlotReq.status !== 'PENDING' || selectedSlotReq.requestor === currentUser.name) ? (
+                                    <div className="status-tracker-simple" style={{ marginTop: '32px' }}>
+                                        <h4 style={{ marginBottom: '16px', color: '#64748b', fontSize: '0.85rem', textTransform: 'uppercase', fontWeight: 800 }}>Status Approval</h4>
+                                        <div style={{ padding: '20px', background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '16px' }}>
+                                            <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: selectedSlotReq.status === 'APPROVED' ? '#dcfce7' : selectedSlotReq.status === 'REJECTED' ? '#fee2e2' : '#f5f3ff', color: selectedSlotReq.status === 'APPROVED' ? '#16a34a' : selectedSlotReq.status === 'REJECTED' ? '#ef4444' : '#796cf2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                                {selectedSlotReq.status === 'APPROVED' ? <CheckCircle2 size={24} /> : selectedSlotReq.status === 'REJECTED' ? <XCircle size={24} /> : <Clock size={24} />}
+                                            </div>
+                                            <div>
+                                                <strong style={{ display: 'block', fontSize: '1.1rem', color: '#1e293b' }}>
+                                                    {selectedSlotReq.status === 'PENDING' ? 'Menunggu Approval Dept. Head' :
+                                                        selectedSlotReq.status === 'APPROVED' ? 'Disetujui oleh Dept. Head' :
+                                                            'Ditolak oleh Dept. Head'}
+                                                </strong>
+                                                <span style={{ fontSize: '0.85rem', color: '#94a3b8', marginTop: '4px', display: 'block' }}>Update status real-time untuk penambahan slot Anda.</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className="approval-actions-footer">
+                                        <button className="btn-reject-modern" onClick={async () => {
+                                            const { isConfirmed } = await Swal.fire({
+                                                title: 'Tolak Permintaan Slot?',
+                                                text: "Apakah Anda yakin ingin menolak permintaan penambahan slot ini?",
+                                                icon: 'warning',
+                                                showCancelButton: true,
+                                                confirmButtonColor: '#ef4444',
+                                                cancelButtonColor: '#94a3b8',
+                                                confirmButtonText: 'Ya, Tolak',
+                                                cancelButtonText: 'Batal'
+                                            });
+                                            if (isConfirmed) {
+                                                await updateSlotRequest({ ...selectedSlotReq, status: 'REJECTED' });
+                                                setCurrentView(currentUser.role === 'FINANCE' ? 'FINANCE_APPROVAL' : 'APPROVAL_LIST');
+                                                Swal.fire({
+                                                    title: 'Ditolak',
+                                                    text: 'Permintaan slot telah ditolak.',
+                                                    icon: 'info',
+                                                    confirmButtonColor: '#796cf2'
+                                                });
+                                            }
+                                        }}>Tolak</button>
+                                        <button className="btn-approve-modern" onClick={async () => {
+                                            const { isConfirmed } = await Swal.fire({
+                                                title: 'Setujui Permintaan Slot?',
+                                                html: `Tambahkan quota slot untuk departemen <b>${selectedSlotReq.department}</b> menjadi <b>${selectedSlotReq.requestedSlots}</b>?`,
+                                                icon: 'question',
+                                                showCancelButton: true,
+                                                confirmButtonColor: '#796cf2',
+                                                cancelButtonColor: '#94a3b8',
+                                                confirmButtonText: 'Ya, Setujui',
+                                                cancelButtonText: 'Batal'
+                                            });
+
+                                            if (isConfirmed) {
+                                                await updateSlotRequest({ ...selectedSlotReq, status: 'APPROVED' });
+                                                setCurrentView(currentUser.role === 'FINANCE' ? 'FINANCE_APPROVAL' : 'APPROVAL_LIST');
+                                                Swal.fire({
+                                                    title: 'Disetujui!',
+                                                    html: `NOTIFIKASI EMAIL TERKIRIM KE FINANCE:<br/><br/>Slot Departemen <b>${selectedSlotReq.department}</b> telah ditambah menjadi <b>${selectedSlotReq.requestedSlots} Slots</b>.`,
+                                                    icon: 'success',
+                                                    confirmButtonColor: '#796cf2'
+                                                });
+                                            }
+                                        }}>Setujui</button>
+                                    </div>
+                                )}
                             </div>
                         </div>
                     )}

@@ -617,10 +617,10 @@ app.put('/api/slot-requests/:id/status', async (req, res) => {
 // 5. UPDATE KASBON STATUS (APPROVE/REJECT)
 app.put('/api/kasbons/:id/status', async (req, res) => {
     const { id } = req.params;
-    const { status, approver_name, remarks } = req.body; // Tambah remarks di sini
+    const { status, approver_name, remarks, isRealized, realizationItems, realizationTotal } = req.body;
 
     try {
-        // 1. Get current request to know current step
+        // 1. Get current request
         const { data: request, error: errFetch } = await supabase
             .from('kasbon_requests')
             .select('*, approvals:kasbon_approvals(*)')
@@ -629,9 +629,62 @@ app.put('/api/kasbons/:id/status', async (req, res) => {
 
         if (errFetch) throw errFetch;
 
-        // 2. Find the current pending step
+        // HANDLE REALIZATION DATA (If provided)
+        if (isRealized !== undefined) {
+            console.log(`Updating realization data for ${id}`);
+            const { error: errReal } = await supabase
+                .from('kasbon_requests')
+                .update({
+                    is_realized: isRealized,
+                    realization_total: realizationTotal
+                })
+                .eq('id', id);
+
+            if (errReal) throw errReal;
+
+            // Save realization items if provided
+            if (realizationItems && realizationItems.length > 0) {
+                // Delete old realization items first
+                await supabase.from('kasbon_items').delete().eq('kasbon_id', id).eq('is_realization_item', true);
+
+                // Insert new ones
+                const itemsToInsert = realizationItems.map(item => ({
+                    kasbon_id: id,
+                    description: item.description,
+                    amount: item.amount,
+                    is_realization_item: true
+                }));
+                const { error: errItems } = await supabase.from('kasbon_items').insert(itemsToInsert);
+                if (errItems) throw errItems;
+            }
+        }
+
+        // SPECIAL HANDLING FOR SETTLEMENT
+        // If status is SETTLED, we don't look for pending approval steps
+        if (status === 'SETTLED') {
+            const { data: updated, error: errUpd } = await supabase
+                .from('kasbon_requests')
+                .update({ status: 'SETTLED' })
+                .eq('id', id)
+                .select()
+                .single();
+
+            if (errUpd) throw errUpd;
+
+            // AUTO REVERT SLOT IF IT WAS OVER_SLOT
+            if (updated.type === 'OVER_SLOT') {
+                console.log(`Auto Reverting Slots for Department: ${updated.department_name} (CC: ${updated.cost_center_code})`);
+                await supabase
+                    .from('department_settings')
+                    .update({ max_slots: 2 })
+                    .eq('cost_center_code', updated.cost_center_code);
+            }
+
+            return res.json({ status: 'success', data: updated });
+        }
+
+        // 2. Find the current pending step (for APPROVAL flow)
         const currentApprovals = request.approvals.sort((a, b) => a.step_order - b.step_order);
-        // In simulation, we might not match the name exactly, so we take the first pending step
         const myStep = currentApprovals.find(a => a.status === 'PENDING');
 
         if (!myStep) {
@@ -644,7 +697,7 @@ app.put('/api/kasbons/:id/status', async (req, res) => {
             .update({
                 status: status,
                 approved_at: new Date().toISOString(),
-                remarks: remarks // Simpen alasannya di kolom remarks
+                remarks: remarks
             })
             .eq('id', myStep.id);
 
@@ -656,10 +709,7 @@ app.put('/api/kasbons/:id/status', async (req, res) => {
 
         if (status === 'REJECTED') {
             finalStatus = 'REJECTED';
-            // Also mark all other pending steps as SKIPPED/REJECTED if needed, 
-            // but usually setting the main request to REJECTED is enough for the UI.
         } else {
-            // Check if all steps are approved
             const remainingPending = currentApprovals.filter(a => a.id !== myStep.id && a.status === 'PENDING');
             if (remainingPending.length === 0) {
                 finalStatus = 'APPROVED';

@@ -131,7 +131,7 @@ const ApprovalScreen: React.FC<ApprovalScreenProps> = ({ request, onBack, onAppr
                         <XCircle size={18} /> Tolak
                     </button>
                     <button className="btn-approve-modern" onClick={() => onApprove(request.id)}>
-                        <CheckCircle2 size={18} /> {request.type === 'OVER_SLOT' ? 'Setujui Penambahan Slot & Kasbon' : 'Setujui'}
+                        <CheckCircle2 size={18} /> Setujui
                     </button>
                 </div>
             </div>
