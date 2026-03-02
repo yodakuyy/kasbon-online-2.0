@@ -37,7 +37,9 @@ export interface DeptSetting {
 export interface KasbonRequest {
     id: string;
     requestor: string;
+    receiverName: string;
     department: string;
+    costCenter: string;
     amount: number;
     date: string;
     dateNeeded: string;
@@ -94,7 +96,7 @@ interface AppContextType {
         avgApproval: string;
         outstanding: number;
     };
-    addRequest: (request: Omit<KasbonRequest, 'id' | 'status' | 'isOverdue' | 'slot' | 'approvalPath' | 'currentStepIndex' | 'type'> & { type?: 'REGULAR' | 'OVER_SLOT', slotJustification?: string }) => void;
+    addRequest: (request: Omit<KasbonRequest, 'id' | 'status' | 'isOverdue' | 'slot' | 'approvalPath' | 'currentStepIndex' | 'type' | 'costCenter'> & { type?: 'REGULAR' | 'OVER_SLOT', slotJustification?: string }) => void;
     matrixConfigs: MatrixConfig[];
     deptSettings: DeptSetting[];
     updateMatrixConfig: (config: MatrixConfig) => void;
@@ -169,17 +171,24 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (!userStr) return 'IT Operation';
 
         // Try to match with deptSettings first for clean mapping
-        const ccCode = userStr.cost_center || userStr.organization_unit || '';
-        const match = deptSettings.find(d => d.deptId === ccCode);
+        const ccCodeClean = extractCCCode(userStr);
+        const match = deptSettings.find(d => d.deptId === ccCodeClean);
         if (match) return match.deptName;
 
         // Try to use department or org unit over raw cc code
         const rawDept = userStr.department || userStr.organization_unit;
 
+        // CUSTOM OVERRIDE for certain formal names to friendlier ones
+        if (rawDept === 'Application Systems Support Unit' || userStr.cost_center === 'Application Systems Support Unit') {
+            return 'Digital Infrastructure';
+        }
+
         if (userStr.cost_center) {
             const parts = userStr.cost_center.trim().split(/\s+/);
-            if (parts.length > 1) {
-                return parts.slice(1).join(' '); // removes the 'CB018-CC028' prefix if present
+            // Only split if the first word really looks like a Cost Center code (e.g. CB018-CC028)
+            const isCodePrefix = /^[A-Z0-9]+-[A-Z0-9]+$/.test(parts[0]);
+            if (parts.length > 1 && isCodePrefix) {
+                return parts.slice(1).join(' '); // removes the 'CB018-CC028' prefix 
             }
             if (rawDept && rawDept !== userStr.cost_center) {
                 return rawDept; // return department if cost center is only the code
@@ -216,7 +225,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                 const mappedKasbons: KasbonRequest[] = result.data.map((dbKasbon: any) => ({
                     id: dbKasbon.id,
                     requestor: dbKasbon.requestor_name,
+                    receiverName: dbKasbon.receiver_name || dbKasbon.requestor_name,
                     department: dbKasbon.department_name,
+                    costCenter: dbKasbon.cost_center_code,
                     amount: dbKasbon.amount,
                     date: dbKasbon.request_date.split('T')[0],
                     dateNeeded: dbKasbon.date_needed,
@@ -666,7 +677,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             let person: any = null;
             let roleDisplay = layer;
             if (isOverSlotRequest && layer === 'Dept Senior Manager') {
-                roleDisplay = 'Dept Senior Manager (Slot Approval)';
+                roleDisplay = 'Dept Senior Manager';
             }
 
             switch (layer) {
@@ -753,7 +764,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             .reduce((acc, r) => acc + r.amount, 0)
     };
 
-    const addRequest = async (newReq: Omit<KasbonRequest, 'id' | 'status' | 'isOverdue' | 'slot' | 'approvalPath' | 'currentStepIndex' | 'type'> & { type?: 'REGULAR' | 'OVER_SLOT' }) => {
+    const addRequest = async (newReq: Omit<KasbonRequest, 'id' | 'status' | 'isOverdue' | 'slot' | 'approvalPath' | 'currentStepIndex' | 'type' | 'costCenter'> & { type?: 'REGULAR' | 'OVER_SLOT', slotJustification?: string }) => {
         const userStr = localStorage.getItem('kasbon_user');
         const loggedUser = userStr ? JSON.parse(userStr) : null;
 
@@ -762,13 +773,18 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
         const costCenter = extractCCCode(loggedUser);
 
-        const activeRequests = requests.filter(r => r.requestor === name && r.status !== 'SETTLED');
-        const nextSlot = activeRequests.length + 1;
+        // SLOT CALCULATION: Department-wide active requests
+        const activeDeptRequests = requests.filter(r =>
+            r.costCenter === costCenter &&
+            !['SETTLED', 'REJECTED', 'REVOKED'].includes(r.status)
+        );
+        const nextSlot = activeDeptRequests.length + 1;
         const isOverLimit = nextSlot > 2;
 
         const payload = {
             requestor_emp_no: emp_no,
             requestor_name: name,
+            receiver_name: newReq.receiverName || name,
             department_name: newReq.department,
             cost_center_code: costCenter,
             amount: newReq.amount,

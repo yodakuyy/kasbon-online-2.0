@@ -66,7 +66,7 @@ const StatusTracker: React.FC<StatusTrackerProps> = ({ request, onBack }) => {
                                     <div className="step-point">
                                         {isApproved ? <CheckCircle2 size={16} /> : (isRejected ? <XCircle size={16} /> : (isCurrent ? <Clock size={16} /> : <CircleDashed size={16} />))}
                                     </div>
-                                    <span>{step.role === 'Requestor' || step.role === 'Submitted' ? 'Submitted' : step.role}</span>
+                                    <span>{(step.role === 'Requestor' || step.role === 'Submitted' ? 'Submitted' : step.role).replace(' (Slot Approval)', '')}</span>
                                 </div>
                             </React.Fragment>
                         );
@@ -76,6 +76,24 @@ const StatusTracker: React.FC<StatusTrackerProps> = ({ request, onBack }) => {
 
             {/* Detail Kasbon & Lampiran */}
             <div className="details-grid-modern">
+                <section className="detail-kasbon-card">
+                    <h3>Informasi Pengajuan</h3>
+                    <div className="items-table-modern">
+                        <div className="item-row-detail">
+                            <span className="item-desc">Pemohon</span>
+                            <strong>{request.requestor}</strong>
+                        </div>
+                        <div className="item-row-detail">
+                            <span className="item-desc">Penerima</span>
+                            <strong style={request.receiverName !== request.requestor ? { color: '#796cf2' } : {}}>{request.receiverName}</strong>
+                        </div>
+                        <div className="item-row-detail">
+                            <span className="item-desc">Departemen</span>
+                            <strong>{request.department}</strong>
+                        </div>
+                    </div>
+                </section>
+
                 <section className="detail-kasbon-card">
                     <h3>Detail Kasbon</h3>
                     <div className="items-table-modern">

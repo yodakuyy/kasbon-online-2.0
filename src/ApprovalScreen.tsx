@@ -16,9 +16,23 @@ interface ApprovalScreenProps {
 }
 
 const ApprovalScreen: React.FC<ApprovalScreenProps> = ({ request, onBack, onApprove, onReject }) => {
-    const { currentUser } = useApp();
+    const { currentUser, deptSettings, requests } = useApp();
     const currentStep = request.approvalPath.find(s => s.status === 'PENDING');
     const isProxy = currentStep && currentUser.assistantFor.includes(currentStep.approverName);
+
+    // Use the department name directly from the database
+    const realDeptName = request.department;
+    const maxSlotsForDept = deptSettings.find(d => d.deptName === realDeptName)?.maxSlots || 2;
+
+    // Calculate actual outstanding for this department (active/approved but not settled)
+    const activeDeptRequests = requests.filter(r =>
+        (r.costCenter === request.costCenter || r.department === request.department) &&
+        !['SETTLED', 'REJECTED', 'REVOKED'].includes(r.status)
+    );
+    const totalDeptOutstanding = activeDeptRequests.reduce((sum, r) => sum + r.amount, 0);
+
+    // Slot count for the display: total active requests in this department
+    const currentActiveSlots = activeDeptRequests.length;
 
     return (
         <div className="approval-screen-page animate-fade-in">
@@ -40,10 +54,10 @@ const ApprovalScreen: React.FC<ApprovalScreenProps> = ({ request, onBack, onAppr
                         <span><strong>PENGAJUAN OVER-SLOT:</strong> Memerlukan persetujuan khusus hingga Dept. Head untuk melanjutkan.</span>
                     </div>
                 )}
-                <div className="card-top-info">
-                    <div className="user-profile-info">
+                <div className="card-top-info-grid">
+                    <div className="profile-section-modern">
                         <div className="user-avatar-lg">
-                            <img src="https://ui-avatars.com/api/?name=Fahmi+Ilmawan&background=796cf2&color=fff" alt="avatar" />
+                            <img src={`https://ui-avatars.com/api/?name=${encodeURIComponent(request.requestor)}&background=796cf2&color=fff`} alt="avatar" />
                         </div>
                         <div className="user-meta-info">
                             <p className="meta-label">Pemohon</p>
@@ -51,14 +65,16 @@ const ApprovalScreen: React.FC<ApprovalScreenProps> = ({ request, onBack, onAppr
                         </div>
                     </div>
 
-                    <div className="request-details-top">
+                    <div className="info-grid-modern">
                         <div className="meta-item">
                             <span className="meta-label">Departemen</span>
-                            <p className="meta-value">{request.department}</p>
+                            <p className="meta-value">{realDeptName}</p>
                         </div>
                         <div className="meta-item">
-                            <span className="meta-label">Total Pengajuan</span>
-                            <p className="meta-value-total">Rp {request.amount.toLocaleString()}</p>
+                            <span className="meta-label">Penerima</span>
+                            <p className="meta-value" style={request.receiverName !== request.requestor ? { color: '#796cf2', fontWeight: 'bold' } : {}}>
+                                {request.receiverName}
+                            </p>
                         </div>
                     </div>
                 </div>
@@ -86,8 +102,8 @@ const ApprovalScreen: React.FC<ApprovalScreenProps> = ({ request, onBack, onAppr
                     <div className="banner-flex">
                         <AlertCircle size={20} color="#6b7280" />
                         <div className="banner-content">
-                            <span>Department Kasbon: <strong>{request.slot} dari 2</strong></span>
-                            <p>Outstanding Dept: Rp 2.500.000</p>
+                            <span>Slot Kasbon Departemen: <strong>{currentActiveSlots} dari {maxSlotsForDept}</strong></span>
+                            <p>Outstanding Unit (All Members): Rp {totalDeptOutstanding.toLocaleString()}</p>
                         </div>
                     </div>
                 </div>
@@ -145,17 +161,17 @@ const ApprovalScreen: React.FC<ApprovalScreenProps> = ({ request, onBack, onAppr
 
         .approval-card-modern { background: white; border-radius: 24px; padding: 40px; border: 1px solid #f3f4f6; box-shadow: var(--shadow); }
         
-        .card-top-info { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 32px; border-bottom: 1px solid #f9fafb; margin-bottom: 32px; }
-        .user-profile-info { display: flex; align-items: center; gap: 20px; }
-        .user-avatar-lg { width: 64px; height: 64px; border-radius: 50%; overflow: hidden; }
-        .user-avatar-lg img { width: 100%; height: 100%; }
+        .card-top-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 32px; padding-bottom: 32px; border-bottom: 1px solid #f9fafb; margin-bottom: 32px; }
+        .profile-section-modern { display: flex; align-items: center; gap: 20px; }
+        .user-avatar-lg { width: 64px; height: 64px; border-radius: 50%; overflow: hidden; flex-shrink: 0; }
+        .user-avatar-lg img { width: 100%; height: 100%; object-fit: cover; }
+
+        .info-grid-modern { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
         
         .meta-label { font-size: 0.75rem; font-weight: 800; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px; }
-        .user-meta-info h3 { font-size: 1.25rem; font-weight: 700; color: #111827; }
+        .user-meta-info h3 { font-size: 1.25rem; font-weight: 700; color: #111827; margin: 0; }
         
-        .request-details-top { display: flex; gap: 40px; text-align: right; }
-        .meta-value { font-weight: 700; color: #374151; font-size: 1rem; }
-        .meta-value-total { font-weight: 800; color: #111827; font-size: 1.1rem; }
+        .meta-value { font-weight: 700; color: #374151; font-size: 0.95rem; margin: 0; }
 
         .keperluan-section-modern h4 { font-size: 0.85rem; font-weight: 800; color: #9ca3af; text-transform: uppercase; margin-bottom: 24px; }
         .items-list-approval { display: flex; flex-direction: column; gap: 16px; margin-bottom: 24px; }

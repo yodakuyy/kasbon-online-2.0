@@ -423,7 +423,7 @@ app.get('/api/kasbons', async (req, res) => {
 // 2. CREATE NEW KASBON
 app.post('/api/kasbons', async (req, res) => {
     try {
-        const { requestor_emp_no, requestor_name, department_name, cost_center_code,
+        const { requestor_emp_no, requestor_name, receiver_name, department_name, cost_center_code,
             amount, date_needed, bank_name, bank_account, purpose, items, approvalPath, slot_used, type, slot_justification
         } = req.body;
 
@@ -447,6 +447,7 @@ app.post('/api/kasbons', async (req, res) => {
             id: kasbon_id,
             requestor_emp_no,
             requestor_name,
+            receiver_name: receiver_name || requestor_name,
             department_name,
             cost_center_code,
             amount,

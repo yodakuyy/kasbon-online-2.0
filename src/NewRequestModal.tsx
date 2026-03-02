@@ -12,7 +12,8 @@ import {
     UserCheck,
     Hash,
     Building2,
-    Loader2
+    Loader2,
+    User
 } from 'lucide-react';
 import Swal from 'sweetalert2';
 import { useApp, type KasbonItem } from './context/AppContext';
@@ -31,6 +32,7 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
         bankAccount: '',
         purpose: '',
         slotJustification: '',
+        receiverName: '',
     });
 
     const [items, setItems] = useState<Omit<KasbonItem, 'id'>[]>([
@@ -65,6 +67,49 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
         setAttachments(attachments.filter((_, i) => i !== index));
     };
 
+    const handleNextStep = (e: React.MouseEvent) => {
+        e.preventDefault();
+
+        // VALIDASI STEP 1
+        if (step === 1) {
+            if (!formData.receiverName || !formData.bankName || !formData.bankAccount || !formData.dateNeeded) {
+                Swal.fire({
+                    icon: 'warning',
+                    title: 'Informasi Belum Lengkap',
+                    text: 'Harap lengkapi semua informasi dasar (Penerima, Bank, Rekening, Tanggal) sebelum melanjutkan.',
+                    confirmButtonColor: '#796cf2'
+                });
+                return;
+            }
+        }
+
+        // VALIDASI STEP 2: Rincian Keperluan
+        if (step === 2) {
+            if (items.length === 0) {
+                Swal.fire({
+                    icon: 'warning',
+                    title: 'Keperluan Masih Kosong',
+                    text: 'Harap isi setidaknya satu keperluan.',
+                    confirmButtonColor: '#796cf2'
+                });
+                return;
+            }
+
+            const isAllValid = items.every(it => it.description.trim() !== '' && it.amount > 0);
+            if (!isAllValid) {
+                Swal.fire({
+                    icon: 'warning',
+                    title: 'Rincian Tidak Valid',
+                    text: 'Tiap item keperluan harus memiliki deskripsi dan nominal yang valid (di atas 0).',
+                    confirmButtonColor: '#796cf2'
+                });
+                return;
+            }
+        }
+
+        setStep(step + 1);
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
@@ -77,8 +122,20 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
         if (totalAmount <= 0) {
             Swal.fire({
                 icon: 'error',
+                title: 'Total Belum Benar',
+                text: 'Total pengajuan kasbon tidak boleh Rp. 0. Harap periksa rincian keperluan anda.',
+                confirmButtonColor: '#796cf2'
+            });
+            return;
+        }
+
+        // Re-validate items for safety
+        const isAllValid = items.every(it => it.description.trim() !== '' && it.amount > 0);
+        if (!isAllValid) {
+            Swal.fire({
+                icon: 'error',
                 title: 'Data Tidak Valid',
-                text: 'Total pengajuan kasbon tidak boleh Rp. 0',
+                text: 'Harap periksa kembali rincian keperluan anda.',
                 confirmButtonColor: '#796cf2'
             });
             return;
@@ -120,6 +177,7 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
 
             await addRequest({
                 requestor: currentUser.name,
+                receiverName: formData.receiverName || currentUser.name,
                 department: currentUser.dept,
                 amount: totalAmount,
                 purpose: items[0]?.description || 'Multiple Items',
@@ -224,6 +282,34 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
 
 
                                 <div className="form-grid-2" style={{ marginTop: '20px' }}>
+                                    {/* Row 1: Penerima | Bank */}
+                                    <div className="form-group-modern">
+                                        <label>Nama Penerima</label>
+                                        <div className="input-with-icon">
+                                            <User size={18} color="#6b7280" />
+                                            <input
+                                                type="text"
+                                                placeholder="Isi nama penerima"
+                                                value={formData.receiverName}
+                                                onChange={e => setFormData({ ...formData, receiverName: e.target.value })}
+                                            />
+                                        </div>
+                                    </div>
+                                    <div className="form-group-modern">
+                                        <label>Nama Bank</label>
+                                        <div className="input-with-icon">
+                                            <Building2 size={18} color="#6b7280" />
+                                            <input
+                                                type="text"
+                                                placeholder="Contoh: BCA / Mandiri"
+                                                value={formData.bankName}
+                                                onChange={e => setFormData({ ...formData, bankName: e.target.value })}
+                                                required
+                                            />
+                                        </div>
+                                    </div>
+
+                                    {/* Row 2: Tgl Dibutuhkan | No Rekening */}
                                     <div className="form-group-modern">
                                         <label>Tanggal Dibutuhkan</label>
                                         <div className="input-with-icon">
@@ -236,32 +322,17 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
                                             />
                                         </div>
                                     </div>
-                                    <div className="form-row-modern">
-                                        <div className="form-group-modern">
-                                            <label>Nama Bank</label>
-                                            <div className="input-with-icon">
-                                                <Building2 size={18} color="#6b7280" />
-                                                <input
-                                                    type="text"
-                                                    placeholder="Contoh: BCA / Mandiri"
-                                                    value={formData.bankName}
-                                                    onChange={e => setFormData({ ...formData, bankName: e.target.value })}
-                                                    required
-                                                />
-                                            </div>
-                                        </div>
-                                        <div className="form-group-modern">
-                                            <label>Nomor Rekening</label>
-                                            <div className="input-with-icon">
-                                                <Hash size={18} color="#6b7280" />
-                                                <input
-                                                    type="text"
-                                                    placeholder="Isikan No Rekening"
-                                                    value={formData.bankAccount}
-                                                    onChange={e => setFormData({ ...formData, bankAccount: e.target.value.replace(/\D/g, '') })}
-                                                    required
-                                                />
-                                            </div>
+                                    <div className="form-group-modern">
+                                        <label>Nomor Rekening</label>
+                                        <div className="input-with-icon">
+                                            <Hash size={18} color="#6b7280" />
+                                            <input
+                                                type="text"
+                                                placeholder="Isikan No Rekening"
+                                                value={formData.bankAccount}
+                                                onChange={e => setFormData({ ...formData, bankAccount: e.target.value.replace(/\D/g, '') })}
+                                                required
+                                            />
                                         </div>
                                     </div>
                                 </div>
@@ -281,7 +352,7 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
                                             <div className="form-group-modern" style={{ flex: 3 }}>
                                                 <input
                                                     type="text"
-                                                    placeholder="Deskripsi keperluan..."
+                                                    placeholder="Deskripsi keperluan... *"
                                                     value={item.description}
                                                     onChange={e => handleItemChange(index, 'description', e.target.value)}
                                                     required
@@ -292,7 +363,8 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
                                                     <span>Rp</span>
                                                     <input
                                                         type="number"
-                                                        placeholder="0"
+                                                        placeholder="0 *"
+                                                        min="1"
                                                         value={item.amount || ''}
                                                         onChange={e => handleItemChange(index, 'amount', parseInt(e.target.value))}
                                                         required
@@ -411,6 +483,14 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
                             <div className="form-step-container">
                                 <div className="review-summary-modern">
                                     <div className="summary-section">
+                                        <h4>Informasi Penerima</h4>
+                                        <div className="summary-row-item">
+                                            <span>Penerima</span>
+                                            <strong>{formData.receiverName || currentUser.name}</strong>
+                                        </div>
+                                    </div>
+
+                                    <div className="summary-section">
                                         <h4>Ringkasan Kasbon</h4>
                                         <div className="summary-items-list">
                                             {items.map((it, idx) => (
@@ -473,10 +553,7 @@ const NewRequestModal: React.FC<NewRequestModalProps> = ({ onClose }) => {
                                 <button
                                     type="button"
                                     className="btn-next-modern"
-                                    onClick={(e) => {
-                                        e.preventDefault();
-                                        setStep(step + 1);
-                                    }}
+                                    onClick={handleNextStep}
                                 >
                                     Lanjut <ChevronRight size={18} />
                                 </button>

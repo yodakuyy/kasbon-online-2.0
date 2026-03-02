@@ -25,7 +25,8 @@ import {
     Trash2,
     ChevronDown,
     Users,
-    X
+    X,
+    XCircle
 } from 'lucide-react';
 import { useApp, type KasbonRequest, type SlotRequest } from './context/AppContext';
 import NewRequestModal from './NewRequestModal';
@@ -115,6 +116,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
     const [selectedRequest, setSelectedRequest] = useState<KasbonRequest | null>(null);
     const [selectedSlotReq, setSelectedSlotReq] = useState<SlotRequest | null>(null);
     const [settingsTab, setSettingsTab] = useState<'MATRIX' | 'DEPT' | 'SLOT' | 'LOGS' | 'REMINDER' | 'PROXY'>('MATRIX');
+    const [backView, setBackView] = useState<string>('DASHBOARD');
 
     // Admin User Management State
     const [modenaUsers, setModenaUsers] = useState<any[]>([]);
@@ -296,6 +298,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
     };
 
     const handleViewRequest = (req: KasbonRequest) => {
+        setBackView(currentView);
         setSelectedRequest(req);
         setCurrentView('TRACKER');
     };
@@ -397,7 +400,19 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                         ><History size={20} /> Riwayat Kasbon</button>
                         <button
                             className={`nav-btn ${currentView === 'REQUEST_SLOT' ? 'active' : ''}`}
-                            onClick={() => setCurrentView('REQUEST_SLOT')}
+                            onClick={() => {
+                                const maxSlots = deptSettings.find(d => d.deptName === currentUser.dept)?.maxSlots || 2;
+                                if (activeKasbonCount < maxSlots) {
+                                    Swal.fire({
+                                        title: 'Slot Masih Tersedia',
+                                        html: `Anda masih memiliki <b>${maxSlots - activeKasbonCount} slot</b> tersedia.<br/><br/>Anda hanya bisa mengajukan penambahan slot jika semua slot sudah terpakai.`,
+                                        icon: 'info',
+                                        confirmButtonColor: '#796cf2'
+                                    });
+                                } else {
+                                    setCurrentView('REQUEST_SLOT');
+                                }
+                            }}
                         ><PlusSquare size={20} /> Slot Tambahan</button>
                         {['APPROVER', 'FINANCE', 'ADMIN'].includes(currentUser.role) && (
                             <button
@@ -587,7 +602,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                                     {req.isRealized ? (
                                                         <><CheckCircle2 size={14} /> Realized</>
                                                     ) : req.status === 'PENDING' ? (
-                                                        <><Clock size={14} /> Waiting {req.approvalPath.find(s => s.status === 'PENDING')?.role || 'Manager'}</>
+                                                        <><Clock size={14} /> Waiting {(req.approvalPath.find(s => s.status === 'PENDING')?.role || 'Manager').replace(' (Slot Approval)', '')}</>
                                                     ) : (
                                                         <><CheckCircle2 size={14} /> Approved</>
                                                     )}
@@ -735,7 +750,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                     {currentView === 'TRACKER' && selectedRequest && (
                         <StatusTracker
                             request={selectedRequest}
-                            onBack={() => setCurrentView('DASHBOARD')}
+                            onBack={() => setCurrentView(backView)}
                         />
                     )}
 
@@ -752,10 +767,14 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                 {(() => {
                                     const pendingRequests = requests.filter(req => {
                                         if (req.status !== 'PENDING') return false;
+
+                                        // Only show requests that are waiting for the current user's specific action.
+                                        // Admins can see EVERYTHING in "Admin Overview", 
+                                        // but "Persetujuan" should be a focused To-Do list.
+
                                         const currentStep = req.approvalPath.find(s => s.status === 'PENDING');
                                         if (!currentStep) return false;
 
-                                        // BISA APPROVE JIKA: Namanya cocok, ATAU dia adalah asisten dari orang tersebut
                                         const isMainApprover = currentStep.approverName === currentUser.name;
                                         const isAssistant = currentUser.assistantFor.includes(currentStep.approverName);
 
@@ -921,28 +940,54 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                         </div>
                     )}
 
-                    {currentView === 'REQUEST_SLOT' && (
-                        <SlotRequestForm
-                            currentSlots={deptSettings.find(d => d.deptName === currentUser.dept)?.maxSlots || 2}
-                            onBack={() => setCurrentView('DASHBOARD')}
-                            onSubmit={(data) => {
-                                addSlotRequest({
-                                    requestor: currentUser.name,
-                                    department: currentUser.dept,
-                                    reason: data.reason,
-                                    currentSlots: deptSettings.find(d => d.deptName === currentUser.dept)?.maxSlots || 2,
-                                    requestedSlots: data.requestedSlots
-                                });
-                                setCurrentView('DASHBOARD');
-                                Swal.fire({
-                                    title: 'Permintaan Dikirim!',
-                                    text: 'Permintaan tambah slot sudah diajukan ke Dept. Head!',
-                                    icon: 'success',
-                                    confirmButtonColor: '#796cf2'
-                                });
-                            }}
-                        />
-                    )}
+                    {currentView === 'REQUEST_SLOT' && (() => {
+                        const maxSlots = deptSettings.find(d => d.deptName === currentUser.dept)?.maxSlots || 2;
+                        const hasAvailableSlot = activeKasbonCount < maxSlots;
+
+                        if (hasAvailableSlot) {
+                            return (
+                                <div className="slot-form-container animate-fade-in">
+                                    <div className="slot-warning-card">
+                                        <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: '#fef3c7', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                            <AlertCircle size={32} color="#b45309" />
+                                        </div>
+                                        <h4>Slot Masih Tersedia</h4>
+                                        <p>
+                                            Departemen <b>{currentUser.dept}</b> memiliki quota <b>{maxSlots} slot</b>.<br />
+                                            Saat ini Anda baru menggunakan <b>{activeKasbonCount} slot</b>.
+                                        </p>
+                                        <p style={{ fontSize: '0.85rem' }}>Anda belum memerlukan penambahan slot sementara karena masih ada <b>{maxSlots - activeKasbonCount} slot</b> yang bisa digunakan.</p>
+                                        <button className="btn-submit-slot" onClick={() => setCurrentView('DASHBOARD')} style={{ width: 'auto', padding: '12px 24px', marginTop: '8px' }}>
+                                            <ArrowLeft size={18} /> Kembali ke Dashboard
+                                        </button>
+                                    </div>
+                                </div>
+                            );
+                        }
+
+                        return (
+                            <SlotRequestForm
+                                currentSlots={maxSlots}
+                                onBack={() => setCurrentView('DASHBOARD')}
+                                onSubmit={(data) => {
+                                    addSlotRequest({
+                                        requestor: currentUser.name,
+                                        department: currentUser.dept,
+                                        reason: data.reason,
+                                        currentSlots: maxSlots,
+                                        requestedSlots: data.requestedSlots
+                                    });
+                                    setCurrentView('DASHBOARD');
+                                    Swal.fire({
+                                        title: 'Permintaan Dikirim!',
+                                        text: 'Permintaan tambah slot sudah diajukan ke Dept. Head!',
+                                        icon: 'success',
+                                        confirmButtonColor: '#796cf2'
+                                    });
+                                }}
+                            />
+                        );
+                    })()}
 
                     {currentView === 'APPROVAL' && selectedRequest && (
                         <ApprovalScreen
@@ -954,9 +999,11 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                             onApprove={async () => {
                                 const isFinance = selectedRequest.approvalPath[selectedRequest.currentStepIndex]?.role === 'Finance';
 
-                                const { isConfirmed } = await Swal.fire({
+                                const { value: remarks, isConfirmed } = await Swal.fire({
                                     title: 'Setujui Kasbon?',
-                                    text: "Apakah Anda yakin ingin menyetujui pengajuan kasbon ini?",
+                                    text: "Tambahkan catatan (opsional) untuk persetujuan ini:",
+                                    input: 'textarea',
+                                    inputPlaceholder: 'Tulis catatan di sini...',
                                     icon: 'question',
                                     showCancelButton: true,
                                     confirmButtonColor: '#796cf2',
@@ -966,7 +1013,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                 });
 
                                 if (isConfirmed) {
-                                    await updateRequest({ ...selectedRequest, status: 'APPROVED' });
+                                    await updateRequest({ ...selectedRequest, status: 'APPROVED' }, remarks || '');
 
                                     // Go back to the right list
                                     if (currentUser.role === 'FINANCE') setCurrentView('FINANCE_APPROVAL');
@@ -984,7 +1031,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                 }
                             }}
                             onReject={async () => {
-                                const { value: reason } = await Swal.fire({
+                                const { value: reason, isConfirmed } = await Swal.fire({
                                     title: 'Tolak Kasbon?',
                                     text: "Berikan alasan penolakan kasbon ini:",
                                     input: 'textarea',
@@ -999,7 +1046,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                     }
                                 });
 
-                                if (reason) {
+                                if (isConfirmed && reason) {
                                     await updateRequest({ ...selectedRequest, status: 'REJECTED' }, reason);
 
                                     if (currentUser.role === 'FINANCE') setCurrentView('FINANCE_APPROVAL');
@@ -1069,8 +1116,8 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                         <button className="btn-export-xlsx" onClick={handleExportAdminXLSX}>
                                             <Download size={16} /> Export XLSX
                                         </button>
-                                        <button className="btn-filter-admin" onClick={() => setAdminFilter('RECENT')}>
-                                            <RefreshCw size={16} /> Reset
+                                        <button className="btn-filter-admin" onClick={() => setAdminFilter('RECENT')} title="Reset Filter">
+                                            <RefreshCw size={16} /> <span>Reset</span>
                                         </button>
                                     </div>
                                 </div>
@@ -2573,6 +2620,11 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
         .s-input select:focus, .s-input textarea:focus { border-color: #796cf2; box-shadow: 0 0 0 4px rgba(121, 108, 242, 0.1); }
         .btn-submit-slot { background: #796cf2; color: white; border: none; padding: 16px; border-radius: 14px; font-weight: 800; font-size: 1rem; cursor: pointer; transition: all 0.2s; margin-top: 12px; }
         .btn-submit-slot:hover { transform: translateY(-2px); box-shadow: 0 8px 20px rgba(121, 108, 242, 0.2); }
+        .btn-submit-slot:disabled { background: #e2e8f0; color: #94a3b8; cursor: not-allowed; transform: none; box-shadow: none; }
+
+        .slot-warning-card { background: #fffbeb; border: 1px solid #fef3c7; border-radius: 20px; padding: 32px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+        .slot-warning-card h4 { color: #b45309; font-size: 1.2rem; font-weight: 800; }
+        .slot-warning-card p { color: #d97706; font-weight: 600; font-size: 0.95rem; }
 
         .item-action-btn { background: #f8fafc; border: none; padding: 8px; border-radius: 10px; color: #94a3b8; cursor: pointer; transition: all 0.2s; }
         .item-action-btn:hover { background: #1e293b; color: white; }
@@ -2593,6 +2645,34 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
 
         .btn-export-xlsx { background: white; border: 1.5px solid #e2e8f0; padding: 8px 16px; border-radius: 10px; display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 0.85rem; cursor: pointer; transition: all 0.2s; color: #475569; }
         .btn-export-xlsx:hover { background: #f8fafc; border-color: #796cf2; color: #796cf2; }
+
+        .btn-filter-admin { 
+            background: white; border: 1.5px solid #e2e8f0; padding: 8px 16px; border-radius: 10px; 
+            display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 0.85rem; 
+            cursor: pointer; transition: all 0.2s; color: #64748b; 
+        }
+        .btn-filter-admin:hover { border-color: #94a3b8; color: #1e293b; background: #f1f5f9; }
+        
+        .btn-more-admin { 
+            background: #f8fafc; color: #796cf2; border: 1.5px solid #796cf2; 
+            padding: 6px 14px; border-radius: 8px; font-size: 0.8rem; font-weight: 800; 
+            cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px; 
+        }
+        .btn-more-admin:hover { background: #796cf2; color: white; transform: scale(1.05); }
+
+        .btn-filter-admin { 
+            background: white; border: 1.5px solid #e2e8f0; padding: 8px 16px; border-radius: 10px; 
+            display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 0.85rem; 
+            cursor: pointer; transition: all 0.2s; color: #64748b; 
+        }
+        .btn-filter-admin:hover { border-color: #94a3b8; color: #1e293b; background: #f1f5f9; }
+        
+        .btn-more-admin { 
+            background: #f8fafc; color: #796cf2; border: 1.5px solid #796cf2; 
+            padding: 6px 14px; border-radius: 8px; font-size: 0.8rem; font-weight: 800; 
+            cursor: pointer; transition: all 0.2s; display: inline-flex; align-items: center; gap: 6px; 
+        }
+        .btn-more-admin:hover { background: #796cf2; color: white; transform: scale(1.05); }
         
         .admin-table-card { background: white; border-radius: 24px; border: 1px solid #e2e8f0; overflow: hidden; }
         .table-header-admin { padding: 24px 32px; border-bottom: 1px solid #f1f5f9; display: flex; justify-content: space-between; align-items: center; }
