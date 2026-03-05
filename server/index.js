@@ -1,6 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import pg from 'pg';
 import dotenv from 'dotenv';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -11,20 +10,63 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 dotenv.config({ path: path.join(__dirname, '../.env') });
 
-const { Pool } = pg;
 const app = express();
 
 // Middleware
 app.use(cors());
 app.use(express.json());
 
-// Initialize PostgreSQL connection pool
-// This will use the connection string from the .env file
-const pool = new Pool({
-    connectionString: process.env.MODENA_IDENTITY_DB_URL || 'postgresql://username:password@localhost:5432/modena_identity',
-    // if you're connecting to an external cloud database, you might need:
-    // ssl: { rejectUnauthorized: false }
-});
+// Modena Identity API Config
+const MODENA_API_URL = process.env.MODENA_API_URL || 'http://192.168.0.41:9501/modena/users';
+const MODENA_API_SECRET = process.env.MODENA_API_SECRET || '81b637d8fcd2c6da6359e6963113a1170de795e4b725b84d1e0b4cfd9ec58ce9';
+
+// Utility to fetch from Modena API with filtering or pagination
+async function fetchFromModenaAPI(params = {}) {
+    const query = new URLSearchParams();
+    Object.keys(params).forEach(key => {
+        if (params[key] !== undefined) query.append(key, params[key]);
+    });
+
+    const url = `${MODENA_API_URL}?${query.toString()}`;
+    const response = await fetch(url, {
+        headers: { 'Security-Code': MODENA_API_SECRET }
+    });
+
+    if (!response.ok) {
+        throw new Error(`Modena API Error: ${response.status} ${response.statusText}`);
+    }
+
+    return await response.json();
+}
+
+// Fetch ALL users (handling pagination) with a simple 5-minute cache
+let cachedUsers = null;
+let lastCacheTime = 0;
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+async function fetchAllModenaUsers() {
+    const now = Date.now();
+    if (cachedUsers && (now - lastCacheTime < CACHE_TTL)) {
+        return cachedUsers;
+    }
+
+    let allData = [];
+    let page = 1;
+    let totalPages = 1;
+
+    do {
+        const result = await fetchFromModenaAPI({ page, perpage: 500 });
+        if (result.data) {
+            allData = [...allData, ...result.data];
+        }
+        totalPages = result.total_page || 1;
+        page++;
+    } while (page <= totalPages);
+
+    cachedUsers = allData;
+    lastCacheTime = now;
+    return allData;
+}
 
 // Initialize Supabase Client
 const supabase = createClient(
@@ -32,20 +74,20 @@ const supabase = createClient(
     process.env.SUPABASE_KEY
 );
 
-// Test Database Connection Route
+// Test Connection Route
 app.get('/api/health', async (req, res) => {
     try {
-        const client = await pool.connect();
-        client.release();
+        const result = await fetchFromModenaAPI({ page: 1, perpage: 1 });
         res.json({
             status: 'success',
-            message: 'Connected to Modena Identity PostgreSQL successfully!'
+            message: 'Connected to Modena Identity API successfully!',
+            total_users: result.total
         });
     } catch (err) {
-        console.error('Database connection error:', err);
+        console.error('API connection error:', err);
         res.status(500).json({
             status: 'error',
-            message: 'Failed to connect to the database',
+            message: 'Failed to connect to the Modena API',
             details: err.message
         });
     }
@@ -55,25 +97,8 @@ app.get('/api/health', async (req, res) => {
 // In the future this should have a token verification middleware
 app.get('/api/users/me', async (req, res) => {
     try {
-        // 1. Fetch users from Modena Identity (Postgres)
-        const { rows: modenaUsers } = await pool.query(`
-            SELECT 
-                emp_no, 
-                employe_name, 
-                employee_status,
-                job_title,
-                employee_position,
-                organization_unit,
-                organization_unit as department,
-                cost_center,
-                email,
-                direct_supervisorid,
-                direct_supervisor
-            FROM modena.users 
-            ORDER BY 
-                CASE WHEN employee_status = 'Active' THEN 0 ELSE 1 END,
-                employe_name ASC
-        `);
+        // 1. Fetch users from Modena Identity API (all pages)
+        const modenaUsers = await fetchAllModenaUsers();
 
         // 2. Fetch roles from Supabase
         const { data: supabaseRoles, error: supabaseError } = await supabase
@@ -141,19 +166,18 @@ app.post('/api/auth/login', async (req, res) => {
             return res.status(401).json({ status: 'error', message: 'Password salah! (Hint: Gunakan NIP Anda)' });
         }
 
-        const { rows } = await pool.query(`
-            SELECT emp_no, employe_name, employee_status, job_title, employee_position, 
-                   organization_unit, email, cost_center, direct_supervisorid, direct_supervisor
-            FROM modena.users 
-            WHERE emp_no = $1
-            LIMIT 1
-        `, [emp_no]);
+        // fetch from API with filter
+        const result = await fetchFromModenaAPI({
+            page: 1,
+            perpage: 1,
+            filter: `emp_no:${emp_no}`
+        });
 
-        if (rows.length === 0) {
+        if (!result.data || result.data.length === 0) {
             return res.status(404).json({ status: 'error', message: 'NIP tidak ditemukan di database Modena.' });
         }
 
-        const user = rows[0];
+        const user = result.data[0];
 
         if (user.employee_status !== 'Active') {
             return res.status(403).json({ status: 'error', message: 'Akun karyawan sudah tidak aktif.' });
@@ -201,18 +225,14 @@ app.post('/api/auth/login', async (req, res) => {
 // GET departments — auto-parsed from Modena cost_center, merged with Supabase overrides
 app.get('/api/departments', async (req, res) => {
     try {
-        // 1. Get unique cost centers from Modena (active users only)
-        const { rows } = await pool.query(`
-            SELECT DISTINCT cost_center
-            FROM modena.users 
-            WHERE employee_status = 'Active' AND cost_center IS NOT NULL AND cost_center != ''
-            ORDER BY cost_center
-        `);
+        // 1. Get all active users from API to extract cost centers
+        const allUsers = await fetchAllModenaUsers();
+        const activeUsers = allUsers.filter(u => u.employee_status === 'Active' && u.cost_center);
 
-        // 2. Parse & group cost centers (strip intern prefixes)
+        // 2. Parse & group cost centers
         const deptMap = {};
-        rows.forEach(r => {
-            const raw = r.cost_center.trim();
+        activeUsers.forEach(u => {
+            const raw = u.cost_center.trim();
             // Pattern: optional prefix (7102035-) + CODE (CB018-CC028) + space + NAME
             const match = raw.match(/^(?:\d{6,7}-)?([A-Z0-9]+-[A-Z0-9]+)\s+(.+)$/i);
             if (match) {
@@ -332,32 +352,36 @@ app.get('/api/org-chain/:emp_no', async (req, res) => {
     const { emp_no } = req.params;
     try {
         // 1. Get the employee
-        const { rows: empRows } = await pool.query(`
-            SELECT emp_no, employe_name, employee_position, job_title, organization_unit, direct_supervisorid, direct_supervisor
-            FROM modena.users WHERE emp_no = $1 LIMIT 1
-        `, [emp_no]);
+        const result = await fetchFromModenaAPI({
+            page: 1,
+            perpage: 1,
+            filter: `emp_no:${emp_no}`
+        });
 
-        if (!empRows.length) {
+        if (!result.data || !result.data.length) {
             return res.status(404).json({ status: 'error', message: 'Employee not found' });
         }
 
-        const chain = [empRows[0]];
-        let current = empRows[0];
+        const chain = [result.data[0]];
+        let current = result.data[0];
 
         // 2. Walk up the hierarchy (max 8 levels for safety)
         for (let i = 0; i < 8; i++) {
             if (!current.direct_supervisorid) break;
-            const { rows: bossRows } = await pool.query(`
-                SELECT emp_no, employe_name, employee_position, job_title, organization_unit, direct_supervisorid, direct_supervisor
-                FROM modena.users WHERE emp_no = $1 LIMIT 1
-            `, [current.direct_supervisorid]);
+            const bossResult = await fetchFromModenaAPI({
+                page: 1,
+                perpage: 1,
+                filter: `emp_no:${current.direct_supervisorid}`
+            });
 
-            if (!bossRows.length) break;
+            if (!bossResult.data || !bossResult.data.length) break;
+            const boss = bossResult.data[0];
+
             // Prevent infinite loop
-            if (chain.find(c => c.emp_no === bossRows[0].emp_no)) break;
+            if (chain.find(c => c.emp_no === boss.emp_no)) break;
 
-            chain.unshift(bossRows[0]); // boss goes to top
-            current = bossRows[0];
+            chain.unshift(boss); // boss goes to top
+            current = boss;
         }
 
         res.json({ status: 'success', data: chain });
@@ -383,15 +407,12 @@ app.get('/api/role-users/:role', async (req, res) => {
             return res.json({ status: 'success', data: [] });
         }
 
-        // 2. Get their names from Modena Identity
+        // 2. Get their names from Modena Identity API
         const empNos = roleData.map(r => r.emp_no);
-        const placeholders = empNos.map((_, i) => `$${i + 1}`).join(', ');
-        const { rows } = await pool.query(`
-            SELECT emp_no, employe_name, employee_position, organization_unit
-            FROM modena.users WHERE emp_no IN (${placeholders})
-        `, empNos);
+        const allUsers = await fetchAllModenaUsers();
+        const roleUsers = allUsers.filter(u => empNos.includes(u.emp_no));
 
-        res.json({ status: 'success', data: rows });
+        res.json({ status: 'success', data: roleUsers });
     } catch (err) {
         console.error('Role Users Error:', err.message);
         res.status(500).json({ status: 'error', message: err.message });
@@ -698,7 +719,8 @@ app.put('/api/kasbons/:id/status', async (req, res) => {
             .update({
                 status: status,
                 approved_at: new Date().toISOString(),
-                remarks: remarks
+                remarks: remarks,
+                approver_name: approver_name // Record the actual person who approved
             })
             .eq('id', myStep.id);
 
@@ -815,5 +837,5 @@ app.post('/api/settings/:key', async (req, res) => {
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
     console.log(`🚀 Kasbon Backend Server running on http://localhost:${PORT}`);
-    console.log('🔗 Connecting to Modena Identity DB...');
+    console.log('✅ Modena Identity API Mode: Active');
 });

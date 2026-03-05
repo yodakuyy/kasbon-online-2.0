@@ -1,6 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useMemo, type ReactNode } from 'react';
 import Swal from 'sweetalert2';
 import { supabase } from '../supabaseClient';
+import { translations } from '../i18n';
+import type { Language, TranslationKey } from '../i18n';
 
 export type UserRole = 'USER' | 'APPROVER' | 'FINANCE' | 'ADMIN';
 
@@ -111,9 +113,13 @@ interface AppContextType {
     updateSlotRequest: (request: SlotRequest) => void;
     updateSlotMatrix: (layers: string[]) => void;
     getDynamicApprovalPath: (amount: number, isOverSlotRequest?: boolean) => ApprovalStep[];
+    getSlotApprovalPath: () => ApprovalStep[];
     addLog: (log: Omit<ActivityLog, 'id' | 'timestamp'>) => void;
     extractDeptName: (userStr: any) => string;
     extractCCCode: (userStr: any) => string;
+    language: Language;
+    setLanguage: (lang: Language) => void;
+    t: (key: TranslationKey) => string;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -126,6 +132,21 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const [slotRequests, setSlotRequests] = useState<SlotRequest[]>([]);
     const [activityLogs, setActivityLogs] = useState<ActivityLog[]>([]);
     const [slotMatrix, setSlotMatrix] = useState<string[]>(['Dept. Head']);
+    const [language, setLanguageState] = useState<Language>(() => {
+        if (typeof window !== 'undefined') {
+            return (localStorage.getItem('kasbon_lang') as Language) || 'ID';
+        }
+        return 'ID';
+    });
+
+    const setLanguage = (lang: Language) => {
+        setLanguageState(lang);
+        localStorage.setItem('kasbon_lang', lang);
+    };
+
+    const t = (key: TranslationKey): string => {
+        return translations[language][key] || key;
+    };
     const [orgChain, setOrgChain] = useState<any[]>([]);
     const [matrixConfigs, setMatrixConfigs] = useState<MatrixConfig[]>([
         { id: '1', minAmount: 1, maxAmount: 5000000, layers: ['Requestor', 'Dept Senior Manager'] },
@@ -141,6 +162,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     useEffect(() => {
         const fetchProxies = async () => {
             if (!loggedInUser || (!loggedInUser.emp_no && !loggedInUser.employee_id)) return;
+
+            // Sync role state with loggedInUser role
+            if (loggedInUser.role) {
+                setRoleState(loggedInUser.role as UserRole);
+            }
+
             const myId = loggedInUser.employee_id || loggedInUser.emp_no;
 
             try {
@@ -552,14 +579,75 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         }));
     };
 
+    const getSlotApprovalPath = (): ApprovalStep[] => {
+        const steps: ApprovalStep[] = [];
+
+        // Helper: solve a person from the chain by offset from the requestor
+        const getChainPerson = (levelsUp: number): any => {
+            const chainLen = orgChain.length;
+            const selfIdx = chainLen - 1;
+            const idx = selfIdx - levelsUp;
+            if (idx >= 0 && idx < chainLen) {
+                return orgChain[idx];
+            }
+            return null;
+        };
+
+        const resolveApprover = (layer: string): { name: string, role: string } => {
+            let person: any = null;
+            let roleDisplay = layer;
+
+            switch (layer) {
+                case 'Requestor':
+                    return { name: currentUser.name, role: 'Requestor' };
+                case 'Dept. Head':
+                case 'Dept Senior Manager':
+                    person = getChainPerson(1);
+                    break;
+                case 'Div. Head':
+                case 'Vice President':
+                    person = getChainPerson(2);
+                    break;
+                case 'Executive Vice President':
+                    person = getChainPerson(3);
+                    break;
+                case 'Finance':
+                    return {
+                        name: financeUsers.length > 0
+                            ? financeUsers.map(u => u.employe_name).join(', ')
+                            : 'Finance Team',
+                        role: 'Finance'
+                    };
+                default:
+                    return { name: layer, role: roleDisplay };
+            }
+
+            if (person) {
+                return {
+                    name: person.employe_name || person.direct_supervisor || person.name || 'Unknown',
+                    role: person.position || person.role_description || roleDisplay
+                };
+            }
+
+            return { name: 'To Be Decided', role: roleDisplay };
+        };
+
+        slotMatrix.forEach((layer) => {
+            const { name, role } = resolveApprover(layer);
+            steps.push({
+                approverName: name,
+                role: role,
+                status: 'PENDING',
+                stepOrder: steps.length + 1
+            });
+        });
+
+        return steps;
+    };
+
     const addSlotRequest = async (newSlotReq: Omit<SlotRequest, 'id' | 'status' | 'date' | 'approvalPath'>) => {
         try {
-            const approvalPath = slotMatrix.map((layer, idx) => ({
-                approverName: layer === 'Dept. Head' ? currentUser.atasanLangsung : (layer === 'Div. Head' ? 'Sr. Manager Name' : 'Finance Team'),
-                role: layer,
-                status: 'PENDING',
-                stepOrder: idx + 1
-            }));
+            const approvalPath = getSlotApprovalPath();
 
             const res = await fetch('http://localhost:3001/api/slot-requests', {
                 method: 'POST',
@@ -697,7 +785,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                     break;
                 case 'Finance':
                     return {
-                        name: financeUsers.length > 0 ? financeUsers[0].employe_name : 'Finance Team',
+                        name: financeUsers.length > 0
+                            ? financeUsers.map(u => u.employe_name).join(', ')
+                            : 'Finance Team',
                         role: 'Finance'
                     };
                 default:
@@ -839,9 +929,11 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             updateSlotRequest,
             updateSlotMatrix,
             getDynamicApprovalPath,
+            getSlotApprovalPath,
             addLog,
             extractDeptName: tools.extractDeptName,
-            extractCCCode: tools.extractCCCode
+            extractCCCode: tools.extractCCCode,
+            language, setLanguage, t
         }}>
             {children}
         </AppContext.Provider>

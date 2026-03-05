@@ -17,7 +17,6 @@ import {
   Wallet,
   ArrowUpRight,
   ChevronRight,
-  ShieldAlert
 } from 'lucide-react';
 import axios from 'axios';
 
@@ -27,7 +26,7 @@ const AdminDashboard: React.FC = () => {
   const [modenaUsers, setModenaUsers] = useState<any[]>([]);
   const [loadingUsers, setLoadingUsers] = useState(false);
 
-  React.useEffect(() => {
+  useEffect(() => {
     if (activeTab === 'User Management') {
       setLoadingUsers(true);
       axios.get('http://localhost:3001/api/users/me')
@@ -240,7 +239,7 @@ const AdminDashboard: React.FC = () => {
                   <div>
                     <h3>Identity & Configuration</h3>
                     <p style={{ color: '#64748b', fontSize: '0.875rem', marginTop: '4px' }}>
-                      Data tersinkronisasi langsung dengan <strong>Modena Identity DB (READ-ONLY)</strong>.
+                      Data tersinkronisasi langsung dengan <strong>Modena Identity REST API (READ-ONLY)</strong>.
                     </p>
                   </div>
                   <div className="header-filters">

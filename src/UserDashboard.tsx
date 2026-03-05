@@ -39,47 +39,69 @@ import axios from 'axios';
 import * as XLSX from 'xlsx';
 import { supabase } from './supabaseClient';
 
-const SlotRequestForm: React.FC<{ currentSlots: number, onBack: () => void, onSubmit: (data: { reason: string, requestedSlots: number }) => void }> = ({ currentSlots, onBack, onSubmit }) => {
+const SlotRequestForm: React.FC<{ currentSlots: number, onBack: () => void, onSubmit: (data: { reason: string, requestedSlots: number }) => void, getSlotApprovalPath: () => any[] }> = ({ currentSlots, onBack, onSubmit, getSlotApprovalPath }) => {
+    const { t } = useApp();
     const [reason, setReason] = useState('');
     const requestedSlots = currentSlots + 1;
+    const approvalPath = getSlotApprovalPath();
 
     return (
         <div className="slot-form-container animate-fade-in">
-            <header className="tracker-header" style={{ marginBottom: '32px' }}>
+            <header className="tracker-header">
                 <button className="btn-icon-back" onClick={onBack}><ArrowLeft size={20} /></button>
-                <h1>Form Penambahan Slot</h1>
+                <h1>{t('slot_form_title')}</h1>
             </header>
 
             <div className="slot-form-card">
                 <div className="s-icon-bg" style={{ margin: '0 auto 24px' }}><PlusSquare size={32} /></div>
-                <h2 style={{ textAlign: 'center', marginBottom: '8px' }}>Slot Tambahan</h2>
-                <p style={{ textAlign: 'center', color: '#64748b', marginBottom: '32px' }}>Gunakan form ini untuk meminta kuota kasbon aktif lebih dari limit biasanya.</p>
+                <h2 style={{ textAlign: 'center', marginBottom: '8px' }}>{t('add_slot')}</h2>
+                <p style={{ textAlign: 'center', color: '#64748b', marginBottom: '32px' }}>{t('no_active_kasbon_desc')}</p>
 
                 <div className="slot-input-group">
                     <div className="s-input">
-                        <label>Jumlah Slot Yang Diminta</label>
+                        <label>{t('slot_requested')}</label>
                         <div className="slot-readonly-display">
                             <strong>{requestedSlots} Slot</strong>
-                            <span>(Penambahan +1 dari kuota saat ini: {currentSlots})</span>
+                            <span>{t('slot_quota_info')}{currentSlots})</span>
                         </div>
                     </div>
 
                     <div className="s-input">
-                        <label>Alasan</label>
+                        <label>{t('slot_reason')}</label>
                         <textarea
                             rows={4}
-                            placeholder="Silahkan isikan detail alasan permintaan slot tambahan..."
+                            placeholder={t('slot_reason_placeholder')}
                             value={reason}
                             onChange={e => setReason(e.target.value)}
                         />
+                    </div>
+
+                    {/* Preview Alur Persetujuan */}
+                    <div className="approval-timeline-preview" style={{ marginTop: '24px', borderTop: '1px solid #f1f5f9', paddingTop: '24px' }}>
+                        <h4 style={{ fontSize: '0.8rem', fontWeight: 800, color: '#94a3b8', textTransform: 'uppercase', marginBottom: '20px' }}>{t('slot_estimation')}</h4>
+                        <div className="timeline-items-preview">
+                            {approvalPath.map((path, idx, arr) => (
+                                <React.Fragment key={idx}>
+                                    <div className="t-item active">
+                                        <div className="t-dot" style={{ background: '#dcfce7', color: '#796cf2' }}>{path.stepOrder}</div>
+                                        <div className="t-info">
+                                            <span className="t-role" style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: 800 }}>{path.role}</span>
+                                            <span className="t-name" style={{ fontSize: '0.9rem', color: '#1e293b', fontWeight: 700 }}>{path.approverName}</span>
+                                        </div>
+                                    </div>
+                                    {idx !== arr.length - 1 && <div className="t-line" style={{ height: '20px', background: '#f1f5f9', width: '2px', marginLeft: '15px' }} />}
+                                </React.Fragment>
+                            ))}
+                        </div>
                     </div>
 
                     <button
                         className="btn-submit-slot"
                         onClick={() => onSubmit({ reason, requestedSlots })}
                         disabled={!reason.trim()}
+                        style={{ marginTop: '32px' }}
                     >
-                        Ajukan Permintaan Slot
+                        {t('submit_slot_request')}
                     </button>
                 </div>
             </div>
@@ -108,7 +130,9 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
         slotRequests, addSlotRequest, updateSlotRequest,
         slotMatrix, updateSlotMatrix, activityLogs,
         revokeRequest, updateRequest, addLog,
-        extractDeptName, extractCCCode
+        getSlotApprovalPath,
+        extractDeptName, extractCCCode,
+        language, setLanguage, t
     } = useApp();
 
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -393,19 +417,19 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                         <button
                             className={`nav-btn ${currentView === 'DASHBOARD' ? 'active' : ''}`}
                             onClick={() => setCurrentView('DASHBOARD')}
-                        ><LayoutDashboard size={20} /> Dashboard</button>
+                        ><LayoutDashboard size={20} /> {t('dashboard')}</button>
                         <button
                             className={`nav-btn ${currentView === 'HISTORY' ? 'active' : ''}`}
                             onClick={() => setCurrentView('HISTORY')}
-                        ><History size={20} /> Riwayat Kasbon</button>
+                        ><History size={20} /> {t('history')}</button>
                         <button
                             className={`nav-btn ${currentView === 'REQUEST_SLOT' ? 'active' : ''}`}
                             onClick={() => {
                                 const maxSlots = deptSettings.find(d => d.deptName === currentUser.dept)?.maxSlots || 2;
                                 if (activeKasbonCount < maxSlots) {
                                     Swal.fire({
-                                        title: 'Slot Masih Tersedia',
-                                        html: `Anda masih memiliki <b>${maxSlots - activeKasbonCount} slot</b> tersedia.<br/><br/>Anda hanya bisa mengajukan penambahan slot jika semua slot sudah terpakai.`,
+                                        title: t('slot_available_title'),
+                                        html: t('slot_available_html'),
                                         icon: 'info',
                                         confirmButtonColor: '#796cf2'
                                     });
@@ -413,17 +437,17 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                     setCurrentView('REQUEST_SLOT');
                                 }
                             }}
-                        ><PlusSquare size={20} /> Slot Tambahan</button>
-                        {['APPROVER', 'FINANCE', 'ADMIN'].includes(currentUser.role) && (
+                        ><PlusSquare size={20} /> {t('add_slot')}</button>
+                        {(['APPROVER', 'FINANCE', 'ADMIN'].includes(currentUser.role) || (requests.some(r => r.approvalPath.some(path => path.status === 'PENDING' && (path.approverName === currentUser.name || currentUser.assistantFor.includes(path.approverName))))) || (slotRequests.some(s => s.status === 'PENDING'))) && (
                             <button
                                 className={`nav-btn ${currentView.startsWith('APPROVAL') ? 'active' : ''}`}
                                 onClick={() => setCurrentView('APPROVAL_LIST')}
-                            ><CheckSquare size={20} /> Persetujuan</button>
+                            ><CheckSquare size={20} /> {t('approval_list')}</button>
                         )}
 
                         {currentUser.role === 'ADMIN' && (
                             <>
-                                <div className="nav-section-label admin-label">SYSTEM ADMINISTRATION</div>
+                                <div className="nav-section-label admin-label">{t('management_label')}</div>
                                 <button
                                     className={`nav-btn ${currentView === 'ADMIN_OVERVIEW' ? 'active' : ''}`}
                                     onClick={() => setCurrentView('ADMIN_OVERVIEW')}
@@ -445,19 +469,19 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
 
                         {['FINANCE', 'ADMIN'].includes(currentUser.role) && (
                             <>
-                                <div className="nav-section-label finance-label">FINANCE OPERATIONS</div>
+                                <div className="nav-section-label finance-label">{t('finance_label')}</div>
                                 <button
                                     className={`nav-btn ${currentView === 'FINANCE_APPROVAL' ? 'active' : ''}`}
                                     onClick={() => setCurrentView('FINANCE_APPROVAL')}
-                                ><CheckSquare size={20} /> Finance Approvals</button>
+                                ><CheckSquare size={20} /> {t('finance_approvals')}</button>
                                 <button
                                     className={`nav-btn ${currentView === 'FINANCE_REALISASI' ? 'active' : ''}`}
                                     onClick={() => setCurrentView('FINANCE_REALISASI')}
-                                ><Wallet size={20} /> Review Realisasi</button>
+                                ><Wallet size={20} /> {t('review_realisasi')}</button>
                                 <button
                                     className={`nav-btn ${currentView === 'FINANCE_WAITING_SETTLEMENT' ? 'active' : ''}`}
                                     onClick={() => setCurrentView('FINANCE_WAITING_SETTLEMENT')}
-                                ><Clock size={20} /> Belum Realisasi</button>
+                                ><Clock size={20} /> {t('unrealized')}</button>
                             </>
                         )}
                     </nav>
@@ -479,7 +503,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                             </select>
                         </div>
                     )}
-                    <button className="logout-btn" style={{ width: '100%' }} onClick={onLogout}><LogOut size={18} /> Keluar</button>
+                    <button className="logout-btn" style={{ width: '100%' }} onClick={onLogout}><LogOut size={18} /> {t('logout')}</button>
                 </div>
             </aside>
 
@@ -498,6 +522,10 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                             <Bell size={20} color="#6b7280" />
                             <span className="dot"></span>
                         </div>
+                        <div className="lang-switcher">
+                            <button className={`lang-btn ${language === 'ID' ? 'active' : ''}`} onClick={() => setLanguage('ID')}>ID</button>
+                            <button className={`lang-btn ${language === 'EN' ? 'active' : ''}`} onClick={() => setLanguage('EN')}>EN</button>
+                        </div>
                         <div className="profile-text-flex">
                             <span className="user-name-mini">{loggedInUser?.name || currentUser.name}</span>
                             <span className="user-role-mini">
@@ -507,7 +535,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                             </span>
                         </div>
                         <div className="user-avatar-mini">
-                            <img src="https://ui-avatars.com/api/?name=Fahmi+Ilmawan&background=796cf2&color=fff" alt="avatar" />
+                            <img src={`https://ui-avatars.com/api/?name=${encodeURIComponent(currentUser.name)}&background=796cf2&color=fff`} alt="avatar" />
                         </div>
                     </div>
                 </header>
@@ -520,6 +548,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                     <div className="greeting">
                                         <h1>Halo, {currentUser.name.split(' ')[0]} 👋</h1>
+                                        <p>{t('active_kasbon')}</p>
                                         <p>Departemen: <strong>{currentUser.dept}</strong></p>
                                     </div>
                                     <button
@@ -528,12 +557,12 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                             const maxSlots = deptSettings.find(d => d.deptName === currentUser.dept)?.maxSlots || 2;
                                             if (activeKasbonCount >= maxSlots) {
                                                 Swal.fire({
-                                                    title: 'Slot Kasbon Penuh',
-                                                    html: `Departemen Anda (<b>${currentUser.dept}</b>) sudah mencapai limit <b>${maxSlots} kasbon aktif</b>.<br/><br/>Silahkan ajukan penambahan slot sementara jika ada kebutuhan mendesak.`,
+                                                    title: t('slot_limit_reached_title'),
+                                                    html: t('slot_limit_reached_html'),
                                                     icon: 'warning',
                                                     showCancelButton: true,
-                                                    confirmButtonText: 'Ajukan Slot Tambahan',
-                                                    cancelButtonText: 'Nanti Saja',
+                                                    confirmButtonText: t('ajukan_slot_sekarang'),
+                                                    cancelButtonText: t('nanti_saja'),
                                                     confirmButtonColor: '#796cf2'
                                                 }).then((result) => {
                                                     if (result.isConfirmed) {
@@ -545,7 +574,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                             }
                                         }}
                                     >
-                                        <Plus size={20} /> Ajukan Kasbon Baru
+                                        <Plus size={20} /> {t('submit_new_kasbon')}
                                     </button>
                                 </div>
 
@@ -553,16 +582,16 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                     <div className="stat-card-modern">
                                         <div className="stat-label-flex">
                                             <CheckCircle2 size={16} color="#796cf2" />
-                                            <span>Active Kasbon</span>
+                                            <span>{t('active_slots')}</span>
                                         </div>
                                         <div className="stat-value-big">{activeKasbonCount} / 2</div>
                                     </div>
                                     <div className="stat-card-modern">
-                                        <span className="stat-label">Outstanding</span>
+                                        <span className="stat-label">{t('outstanding')}</span>
                                         <div className="stat-value-big">Rp {stats.outstanding.toLocaleString()}</div>
                                     </div>
                                     <div className="stat-card-modern">
-                                        <span className="stat-label">Total Tahun Ini</span>
+                                        <span className="stat-label">{t('this_year')}</span>
                                         <div className="stat-value-big">Rp {stats.totalYear.toLocaleString()}</div>
                                     </div>
                                 </div>
@@ -582,7 +611,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                                     <span className="kasbon-date-label"><Clock size={12} /> {req.date}</span>
                                                 </div>
                                                 <div className="kasbon-amount">Rp {req.amount.toLocaleString()}</div>
-                                                <div className="kasbon-requestor-info">Pemohon: <strong>{req.requestor}</strong></div>
+                                                <div className="kasbon-requestor-info">{t('requestor')}: <strong>{req.requestor}</strong></div>
                                             </div>
 
                                             <div className="kasbon-status-area">
@@ -758,8 +787,8 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                         <div className="approval-list-view animate-fade-in">
                             <div className="view-title-header">
                                 <div className="title-with-desc">
-                                    <h1>Persetujuan Kasbon & Slot</h1>
-                                    <p>Daftar pengajuan yang memerlukan persetujuan Anda</p>
+                                    <h1>{t('approval_view_title')}</h1>
+                                    <p>{t('approval_view_desc')}</p>
                                 </div>
                             </div>
 
@@ -769,16 +798,20 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                         if (req.status !== 'PENDING') return false;
 
                                         // Only show requests that are waiting for the current user's specific action.
-                                        // Admins can see EVERYTHING in "Admin Overview", 
-                                        // but "Persetujuan" should be a focused To-Do list.
+                                        // Admins can see EVERYTHING to oversee the workflow.
 
                                         const currentStep = req.approvalPath.find(s => s.status === 'PENDING');
                                         if (!currentStep) return false;
 
+                                        // EXCLUDE Finance steps from the general "Persetujuan" list.
+                                        // Finance steps have their own "Finance Approvals" view.
+                                        if (currentStep.role === 'Finance') return false;
+
                                         const isMainApprover = currentStep.approverName === currentUser.name;
                                         const isAssistant = currentUser.assistantFor.includes(currentStep.approverName);
+                                        const isAdmin = currentUser.role === 'ADMIN';
 
-                                        return isMainApprover || isAssistant;
+                                        return isMainApprover || isAssistant || isAdmin;
                                     });
 
                                     const pendingSlots = slotRequests.filter(s => s.status === 'PENDING');
@@ -787,7 +820,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                         return (
                                             <div className="empty-state-card">
                                                 <CheckCircle2 size={48} color="#796cf2" />
-                                                <p>Semua persetujuan sudah selesai dikerjakan!</p>
+                                                <p>{t('approval_empty_state')}</p>
                                             </div>
                                         );
                                     }
@@ -812,7 +845,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                                 <div className="a-amount">Rp {req.amount.toLocaleString()}</div>
                                             </div>
                                             <div className="a-item-right">
-                                                <button className="btn-review-now">Review <ChevronRight size={16} /></button>
+                                                <button className="btn-review-now">{t('review')} <ChevronRight size={16} /></button>
                                             </div>
                                         </div>
                                     ));
@@ -826,7 +859,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                         <div className="a-item-left">
                                             <div className="a-avatar slot-av">S</div>
                                             <div className="a-info">
-                                                <strong>{sr.requestor} (Nambah Slot)</strong>
+                                                <strong>{sr.requestor} ({t('add_slot')})</strong>
                                                 <div className="a-meta">
                                                     <span>{deptSettings.find(d => d.deptId === extractCCCode({ cost_center: sr.department }))?.deptName || extractDeptName({ cost_center: sr.department })} • {sr.date}</span>
                                                     <span className="badge-slot-type">SLOT EXCEPTION</span>
@@ -838,7 +871,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                             <div className="a-reason">"{sr.reason}"</div>
                                         </div>
                                         <div className="a-item-right">
-                                            <button className="btn-review-slot">Review <ChevronRight size={16} /></button>
+                                            <button className="btn-review-slot">{t('review')} <ChevronRight size={16} /></button>
                                         </div>
                                     </div>
                                 ))}
@@ -850,90 +883,106 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                         <div className="approval-slot-screen animate-fade-in">
                             <header className="tracker-header">
                                 <button className="btn-icon-back" onClick={() => setCurrentView('APPROVAL_LIST')}><ArrowLeft size={20} /></button>
-                                <h1>Persetujuan Tambah Slot</h1>
+                                <h1>{t('slot_approval_title')}</h1>
                             </header>
                             <div className="approval-card-modern">
                                 <div className="slot-req-header">
                                     <div className="s-icon-bg"><PlusCircle size={32} /></div>
                                     <div className="s-title">
-                                        <h3>Request Slot Kasbon Sementara</h3>
-                                        <p>ID Request: {selectedSlotReq.id}</p>
+                                        <h3>{t('slot_req_management')}</h3>
+                                        <p>{t('slot_id')}: {selectedSlotReq.id}</p>
                                     </div>
                                 </div>
                                 <div className="slot-req-details-grid">
-                                    <div className="s-detail"><span>Pemohon</span><strong>{selectedSlotReq.requestor}</strong></div>
-                                    <div className="s-detail"><span>Departemen</span><strong>{deptSettings.find(d => d.deptId === extractCCCode({ cost_center: selectedSlotReq.department }))?.deptName || extractDeptName({ cost_center: selectedSlotReq.department })}</strong></div>
-                                    <div className="s-detail"><span>Slot Saat Ini</span><strong>{selectedSlotReq.currentSlots}</strong></div>
-                                    <div className="s-detail"><span>Slot Diminta</span><strong className="text-primary">{selectedSlotReq.requestedSlots}</strong></div>
+                                    <div className="s-detail"><span>{t('requestor')}</span><strong>{selectedSlotReq.requestor}</strong></div>
+                                    <div className="s-detail"><span>{t('dept_settings')}</span><strong>{deptSettings.find(d => d.deptId === extractCCCode({ cost_center: selectedSlotReq.department }))?.deptName || extractDeptName({ cost_center: selectedSlotReq.department })}</strong></div>
+                                    <div className="s-detail"><span>{t('slot_current')}</span><strong>{selectedSlotReq.currentSlots}</strong></div>
+                                    <div className="s-detail"><span>{t('slot_requested')}</span><strong className="text-primary">{selectedSlotReq.requestedSlots}</strong></div>
                                 </div>
                                 <div className="justification-box-modern">
-                                    <h5>Alasan Kebutuhan Slot</h5>
+                                    <h5>{t('slot_reason')}</h5>
                                     <p>"{selectedSlotReq.reason}"</p>
                                 </div>
-                                {(selectedSlotReq.status !== 'PENDING' || selectedSlotReq.requestor === currentUser.name) ? (
-                                    <div className="status-tracker-simple" style={{ marginTop: '32px' }}>
-                                        <h4 style={{ marginBottom: '16px', color: '#64748b', fontSize: '0.85rem', textTransform: 'uppercase', fontWeight: 800 }}>Status Approval</h4>
-                                        <div style={{ padding: '20px', background: '#f8fafc', borderRadius: '12px', border: '1px solid #e2e8f0', display: 'flex', alignItems: 'center', gap: '16px' }}>
-                                            <div style={{ width: '48px', height: '48px', borderRadius: '50%', background: selectedSlotReq.status === 'APPROVED' ? '#dcfce7' : selectedSlotReq.status === 'REJECTED' ? '#fee2e2' : '#f5f3ff', color: selectedSlotReq.status === 'APPROVED' ? '#16a34a' : selectedSlotReq.status === 'REJECTED' ? '#ef4444' : '#796cf2', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                                {selectedSlotReq.status === 'APPROVED' ? <CheckCircle2 size={24} /> : selectedSlotReq.status === 'REJECTED' ? <XCircle size={24} /> : <Clock size={24} />}
-                                            </div>
-                                            <div>
-                                                <strong style={{ display: 'block', fontSize: '1.1rem', color: '#1e293b' }}>
-                                                    {selectedSlotReq.status === 'PENDING' ? 'Menunggu Approval Dept. Head' :
-                                                        selectedSlotReq.status === 'APPROVED' ? 'Disetujui oleh Dept. Head' :
-                                                            'Ditolak oleh Dept. Head'}
-                                                </strong>
-                                                <span style={{ fontSize: '0.85rem', color: '#94a3b8', marginTop: '4px', display: 'block' }}>Update status real-time untuk penambahan slot Anda.</span>
-                                            </div>
-                                        </div>
+                                <div className="approval-timeline-preview" style={{ marginTop: '32px', borderTop: '1px solid #f1f5f9', paddingTop: '32px' }}>
+                                    <h4 style={{ marginBottom: '20px', color: '#64748b', fontSize: '0.85rem', textTransform: 'uppercase', fontWeight: 800 }}>{t('slot_request_path')}</h4>
+                                    <div className="timeline-items-preview">
+                                        {selectedSlotReq.approvalPath.map((path, idx, arr) => {
+                                            const isActive = path.status !== 'PENDING';
+                                            const isDone = path.status === 'APPROVED';
+                                            const isRejected = path.status === 'REJECTED';
+
+                                            return (
+                                                <React.Fragment key={idx}>
+                                                    <div className={`t-item ${isActive ? 'active' : ''}`}>
+                                                        <div className="t-dot" style={{
+                                                            background: isDone ? '#dcfce7' : isRejected ? '#fee2e2' : (isActive ? '#f5f3ff' : '#f1f5f9'),
+                                                            color: isDone ? '#16a34a' : isRejected ? '#ef4444' : (isActive ? '#796cf2' : '#94a3b8'),
+                                                            border: isActive ? 'none' : '2px solid #e2e8f0'
+                                                        }}>
+                                                            {isDone ? <CheckCircle2 size={14} /> : isRejected ? <XCircle size={14} /> : path.stepOrder}
+                                                        </div>
+                                                        <div className="t-info">
+                                                            <span className="t-role" style={{ fontSize: '0.7rem', color: '#94a3b8', fontWeight: 800 }}>{path.role}</span>
+                                                            <span className="t-name" style={{ fontSize: '0.95rem', color: '#1e293b', fontWeight: 700 }}>
+                                                                {path.approverName}
+                                                                {path.approvedAt && <span style={{ fontSize: '0.7rem', color: '#64748b', fontWeight: 500, marginLeft: '8px' }}>• {new Date(path.approvedAt).toLocaleDateString()}</span>}
+                                                            </span>
+                                                        </div>
+                                                    </div>
+                                                    {idx !== arr.length - 1 && <div className="t-line" style={{ height: '24px', background: '#f1f5f9', width: '2px', marginLeft: '15px' }} />}
+                                                </React.Fragment>
+                                            );
+                                        })}
                                     </div>
-                                ) : (
-                                    <div className="approval-actions-footer">
+                                </div>
+
+                                {selectedSlotReq.status === 'PENDING' && selectedSlotReq.requestor !== currentUser.name && (
+                                    <div className="approval-actions-footer" style={{ marginTop: '32px', display: 'flex', gap: '12px' }}>
                                         <button className="btn-reject-modern" onClick={async () => {
                                             const { isConfirmed } = await Swal.fire({
-                                                title: 'Tolak Permintaan Slot?',
-                                                text: "Apakah Anda yakin ingin menolak permintaan penambahan slot ini?",
+                                                title: t('confirm_reject_slot_title'),
+                                                text: t('confirm_reject_slot_text'),
                                                 icon: 'warning',
                                                 showCancelButton: true,
                                                 confirmButtonColor: '#ef4444',
                                                 cancelButtonColor: '#94a3b8',
-                                                confirmButtonText: 'Ya, Tolak',
-                                                cancelButtonText: 'Batal'
+                                                confirmButtonText: t('reject'),
+                                                cancelButtonText: t('cancel')
                                             });
                                             if (isConfirmed) {
                                                 await updateSlotRequest({ ...selectedSlotReq, status: 'REJECTED' });
                                                 setCurrentView(currentUser.role === 'FINANCE' ? 'FINANCE_APPROVAL' : 'APPROVAL_LIST');
                                                 Swal.fire({
-                                                    title: 'Ditolak',
+                                                    title: t('reject'),
                                                     text: 'Permintaan slot telah ditolak.',
                                                     icon: 'info',
                                                     confirmButtonColor: '#796cf2'
                                                 });
                                             }
-                                        }}>Tolak</button>
+                                        }}>{t('reject')}</button>
                                         <button className="btn-approve-modern" onClick={async () => {
                                             const { isConfirmed } = await Swal.fire({
-                                                title: 'Setujui Permintaan Slot?',
-                                                html: `Tambahkan quota slot untuk departemen <b>${selectedSlotReq.department}</b> menjadi <b>${selectedSlotReq.requestedSlots}</b>?`,
+                                                title: t('confirm_approve_slot_title'),
+                                                html: `${t('confirm_approve_slot_html')} <b>${selectedSlotReq.department}</b> menjadi <b>${selectedSlotReq.requestedSlots}</b>?`,
                                                 icon: 'question',
                                                 showCancelButton: true,
                                                 confirmButtonColor: '#796cf2',
                                                 cancelButtonColor: '#94a3b8',
-                                                confirmButtonText: 'Ya, Setujui',
-                                                cancelButtonText: 'Batal'
+                                                confirmButtonText: t('approve'),
+                                                cancelButtonText: t('cancel')
                                             });
 
                                             if (isConfirmed) {
                                                 await updateSlotRequest({ ...selectedSlotReq, status: 'APPROVED' });
                                                 setCurrentView(currentUser.role === 'FINANCE' ? 'FINANCE_APPROVAL' : 'APPROVAL_LIST');
                                                 Swal.fire({
-                                                    title: 'Disetujui!',
+                                                    title: t('success_title'),
                                                     html: `NOTIFIKASI EMAIL TERKIRIM KE FINANCE:<br/><br/>Slot Departemen <b>${selectedSlotReq.department}</b> telah ditambah menjadi <b>${selectedSlotReq.requestedSlots} Slots</b>.`,
                                                     icon: 'success',
                                                     confirmButtonColor: '#796cf2'
                                                 });
                                             }
-                                        }}>Setujui</button>
+                                        }}>{t('approve')}</button>
                                     </div>
                                 )}
                             </div>
@@ -969,6 +1018,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                             <SlotRequestForm
                                 currentSlots={maxSlots}
                                 onBack={() => setCurrentView('DASHBOARD')}
+                                getSlotApprovalPath={getSlotApprovalPath}
                                 onSubmit={(data) => {
                                     addSlotRequest({
                                         requestor: currentUser.name,
@@ -1492,7 +1542,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                                         <div className="view-title-header" style={{ marginBottom: '24px' }}>
                                             <div style={{ background: '#fef3c7', padding: '16px', borderRadius: '12px', border: '1px solid #fde68a', width: '100%' }}>
                                                 <p style={{ color: '#92400e', fontSize: '0.85rem' }}>
-                                                    <strong>Info:</strong> Perubahan di sini akan mempengaruhi alur persetujuan saat user melakukan pengajuan <strong>Slot Tambahan</strong>.
+                                                    <strong>Info:</strong> {t('slot_info_banner')}
                                                 </p>
                                             </div>
                                         </div>
@@ -2465,6 +2515,13 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
         .header-notif { position: relative; cursor: pointer; }
         .header-notif .dot { position: absolute; top: -2px; right: -2px; width: 8px; height: 8px; background: #ef4444; border-radius: 50%; border: 2px solid white; }
         
+        .lang-switcher { display: flex; background: #f1f5f9; padding: 4px; border-radius: 10px; gap: 4px; }
+        .lang-btn { 
+            padding: 4px 10px; border-radius: 8px; border: none; font-size: 0.7rem; 
+            font-weight: 800; cursor: pointer; transition: all 0.2s; background: transparent; color: #64748b;
+        }
+        .lang-btn.active { background: white; color: #796cf2; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        
         .profile-text-flex { display: flex; flex-direction: column; text-align: right; }
         .user-name-mini { font-weight: 700; color: #1e293b; font-size: 0.9rem; }
         .user-role-mini { font-size: 0.75rem; color: #64748b; font-weight: 600; }
@@ -2787,6 +2844,29 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
             from { opacity: 0; transform: translateY(20px) scale(0.95); }
             to { opacity: 1; transform: translateY(0) scale(1); }
         }
+
+        /* Approval Timeline Styles */
+        .timeline-items-preview { display: flex; flex-direction: column; gap: 0; }
+        .t-item { display: flex; align-items: center; gap: 16px; }
+        .t-dot { 
+            width: 32px; height: 32px; border-radius: 50%; background: #f1f5f9; color: #64748b;
+            display: flex; align-items: center; justify-content: center; font-size: 0.85rem; font-weight: 800;
+        }
+        .t-item.active .t-dot { background: #dcfce7; color: #796cf2; }
+        .t-info { display: flex; flex-direction: column; }
+        .t-role { font-size: 0.75rem; font-weight: 800; color: #94a3b8; text-transform: uppercase; }
+        .t-name { font-size: 0.95rem; font-weight: 700; color: #1e293b; }
+        .t-line { width: 2px; height: 24px; background: #f1f5f9; margin-left: 15px; }
+
+        .tracker-header { display: flex; align-items: center; gap: 20px; margin-bottom: 40px; }
+        .btn-icon-back { 
+            width: 44px; height: 44px; border-radius: 14px; background: white; 
+            border: 1px solid #e2e8f0; color: #64748b; display: flex; 
+            align-items: center; justify-content: center; cursor: pointer; 
+            transition: all 0.2s; box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+        }
+        .btn-icon-back:hover { background: #f8fafc; border-color: #cbd5e1; color: #1e293b; transform: translateX(-4px); box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+        .tracker-header h1 { font-size: 2.2rem; font-weight: 800; color: #0f172a; margin: 0; letter-spacing: -0.02em; }
 
           /* Pagination Footer Styles */
         .pagination-footer-premium {
