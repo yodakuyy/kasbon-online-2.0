@@ -714,14 +714,21 @@ app.put('/api/kasbons/:id/status', async (req, res) => {
         }
 
         // 3. Update the specific approval status
+        const updateData = {
+            status: status,
+            approved_at: new Date().toISOString(),
+            remarks: remarks
+        };
+
+        // For Finance role, we use the name of the person who actually clicked 'Approve' (could be one of several finance team members)
+        // For others (Managers/VPs), we preserve the original assigned approver name (e.g. delegated boss name)
+        if (myStep.role_description === 'Finance') {
+            updateData.approver_name = approver_name;
+        }
+
         const { error: errApp } = await supabase
             .from('kasbon_approvals')
-            .update({
-                status: status,
-                approved_at: new Date().toISOString(),
-                remarks: remarks,
-                approver_name: approver_name // Record the actual person who approved
-            })
+            .update(updateData)
             .eq('id', myStep.id);
 
         if (errApp) throw errApp;

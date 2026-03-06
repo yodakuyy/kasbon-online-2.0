@@ -109,21 +109,7 @@ const SlotRequestForm: React.FC<{ currentSlots: number, onBack: () => void, onSu
     );
 };
 
-interface UserDashboardProps {
-    loggedInUser?: {
-        emp_no: string;
-        name: string;
-        email: string;
-        position: string;
-        department: string;
-        role: string;
-        direct_supervisorid: string;
-        direct_supervisor: string;
-    };
-    onLogout?: () => void;
-}
-
-const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout }) => {
+const UserDashboard: React.FC = () => {
     const {
         requests, currentUser, stats, setRole,
         matrixConfigs, deptSettings, updateMatrixConfig, saveMatrixConfig,
@@ -132,7 +118,8 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
         revokeRequest, updateRequest, addLog,
         getSlotApprovalPath,
         extractDeptName, extractCCCode,
-        language, setLanguage, t
+        language, setLanguage, t,
+        logout
     } = useApp();
 
     const [isModalOpen, setIsModalOpen] = useState(false);
@@ -503,7 +490,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                             </select>
                         </div>
                     )}
-                    <button className="logout-btn" style={{ width: '100%' }} onClick={onLogout}><LogOut size={18} /> {t('logout')}</button>
+                    <button className="logout-btn" style={{ width: '100%' }} onClick={logout}><LogOut size={18} /> {t('logout')}</button>
                 </div>
             </aside>
 
@@ -527,7 +514,7 @@ const UserDashboard: React.FC<UserDashboardProps> = ({ loggedInUser, onLogout })
                             <button className={`lang-btn ${language === 'EN' ? 'active' : ''}`} onClick={() => setLanguage('EN')}>EN</button>
                         </div>
                         <div className="profile-text-flex">
-                            <span className="user-name-mini">{loggedInUser?.name || currentUser.name}</span>
+                            <span className="user-name-mini">{currentUser.name}</span>
                             <span className="user-role-mini">
                                 {currentUser.role === 'ADMIN' ? 'Super Admin' :
                                     currentUser.role === 'FINANCE' ? 'Finance Team' :

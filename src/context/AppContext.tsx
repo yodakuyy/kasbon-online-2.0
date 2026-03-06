@@ -91,6 +91,9 @@ interface AppContextType {
         isAtasanLangsungActive: boolean;
         assistantFor: string[]; // List nama boss yang dia pegang
     };
+    loggedInUser: any;
+    setUser: (user: any) => void;
+    logout: () => void;
     setRole: (role: UserRole) => void;
     requests: KasbonRequest[];
     stats: {
@@ -156,8 +159,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     ]);
     const [financeUsers, setFinanceUsers] = useState<any[]>([]);
 
-    const userStr = typeof window !== 'undefined' ? localStorage.getItem('kasbon_user') : null;
-    const loggedInUser = useMemo(() => userStr ? JSON.parse(userStr) : null, [userStr]);
+    const [loggedInUser, setLoggedInUser] = useState<any>(() => {
+        if (typeof window !== 'undefined') {
+            const stored = localStorage.getItem('kasbon_user');
+            return stored ? JSON.parse(stored) : null;
+        }
+        return null;
+    });
+
+    const setUser = (user: any) => {
+        setLoggedInUser(user);
+        if (user) {
+            localStorage.setItem('kasbon_user', JSON.stringify(user));
+        } else {
+            localStorage.removeItem('kasbon_user');
+        }
+    };
+
+    const logout = () => {
+        setUser(null);
+    };
 
     useEffect(() => {
         const fetchProxies = async () => {
@@ -556,6 +577,15 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
                     realizationTotal: updatedRequest.realizationTotal
                 })
             });
+
+            // Add activity log for the action
+            addLog({
+                user: currentUser.name,
+                action: `${updatedRequest.status} Kasbon`,
+                details: `Kasbon #${updatedRequest.id} ${updatedRequest.status.toLowerCase()} by ${currentUser.name}.${remarks ? ' Remarks: ' + remarks : ''}`,
+                type: 'KASBON'
+            });
+
             await fetchKasbons(); // Refresh global list
             fetchDeptSettings(); // Refresh settings just in case something reverted (like slots)
         } catch (error) {
@@ -911,6 +941,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     return (
         <AppContext.Provider value={{
             currentUser,
+            loggedInUser,
+            setUser,
+            logout,
             setRole,
             requests,
             stats,

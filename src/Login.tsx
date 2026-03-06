@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { LogIn, Hash, Loader2, AlertCircle, Lock } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useApp } from './context/AppContext';
 
 interface LoginProps {
   onLogin: (userData: any) => void;
@@ -11,6 +12,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const { setUser } = useApp();
   const navigate = useNavigate();
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -29,7 +31,7 @@ const Login: React.FC<LoginProps> = ({ onLogin }) => {
       const data = await res.json();
 
       if (data.status === 'success') {
-        localStorage.setItem('kasbon_user', JSON.stringify(data.data));
+        setUser(data.data);
         onLogin(data.data);
         navigate('/dashboard');
       } else {
